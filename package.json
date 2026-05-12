@@ -29,5 +29,16 @@
   },
   "devDependencies": {
     "nodemon": "^3.0.3"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kharoun/promoearn-backend.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/Kharoun/promoearn-backend/issues"
+  },
+  "homepage": "https://github.com/Kharoun/promoearn-backend#readme"
 }

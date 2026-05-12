@@ -1,4 +1,3 @@
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 require("dotenv").config();
 const express = require("express");
 const helmet = require("helmet");
@@ -16,20 +15,23 @@ const app = express();
 
 // Security headers
 // CORS — must be before helmet
+const allowedOrigins = process.env.CORS_ORIGINS
+  ? process.env.CORS_ORIGINS.split(",")
+  : ["http://localhost:5173", "http://localhost:8081"];
+
 app.use(
   cors({
-    origin: [
-      "http://localhost:5173",
-      "http://127.0.0.1:5173",
-      "http://localhost:8081",
-      "http://127.0.0.1:8081",
-    ],
+    origin: (origin, callback) => {
+      // Allow requests with no origin (mobile apps, curl, Postman)
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      return callback(new Error("Not allowed by CORS"));
+    },
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,
   })
 );
-
 // Security headers
 app.use(helmet({
   crossOriginResourcePolicy: false,
@@ -41,6 +43,7 @@ if (process.env.NODE_ENV !== "test") {
 }
 // Raw body for Paystack webhook signature verification
 app.use("/api/v1/payments/webhook", express.raw({ type: "application/json" }));
+app.use("/api/v1/campaigns/webhook", express.raw({ type: "application/json" })); // ← add this
 
 // Body parsing
 app.use(express.json({ limit: "10kb" }));
@@ -57,16 +60,23 @@ app.get("/health", (req, res) => {
 });
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
-const adminRoutes    = require("./routes/adminRoutes");
-const paymentsRoutes = require("./routes/paymentsRoutes");
-const userRoutes     = require("./routes/userRoutes");
-
-app.use("/api/v1/auth",     authRoutes);
-app.use("/api/v1/admin",    adminRoutes);
-app.use("/api/v1/payments", paymentsRoutes);
+// ─── Routes ───────────────────────────────────────────────────────────────────
+const adminRoutes         = require("./routes/adminRoutes");
+const paymentsRoutes      = require("./routes/paymentsRoutes");
+const userRoutes          = require("./routes/userRoutes");
 const notificationsRoutes = require("./routes/notificationsRoutes");
-app.use("/api/v1",               userRoutes);
+const campaignsRoutes     = require("./routes/campaigns");
+
+app.use("/api/v1/auth",         authRoutes);
+app.use("/api/v1/admin",        adminRoutes);
+app.use("/api/v1/payments",     paymentsRoutes);
 app.use("/api/v1/notifications", notificationsRoutes);
+app.use("/api/v1/campaigns",    campaignsRoutes);
+app.use("/api/v1/admin",        campaignsRoutes);  // ← add this line
+// app.use("/api/v1",              userRoutes);
+// app.use("/api/v1/admin",        campaignsRoutes);
+app.use("/api/v1",              userRoutes);   // ← must be LAST (it's a catch-all)
+
 // ─── 404 Handler ──────────────────────────────────────────────────────────────
 app.use((req, res) => {
   res.status(404).json({

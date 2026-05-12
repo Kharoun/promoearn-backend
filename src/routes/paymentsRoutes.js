@@ -9,7 +9,7 @@ const {
   getTransactions,
   getBanks,        // ← add
   verifyAccount,   // ← add
-} = require("../controllers/paymentsController");
+} = require("../controllers/paymentsController"); 
 
 router.get("/banks",          protect, getBanks);
 router.post("/verify-account", protect, verifyAccount);

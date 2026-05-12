@@ -4,12 +4,12 @@ const { v4: uuidv4 } = require("uuid");
 const https = require("https");
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const REGISTRATION_FEE = 1.00;
+const NGN_RATE         = 1500;
+const REGISTRATION_FEE = 500 / NGN_RATE;  // ~$0.33
 const WELCOME_BONUS    = 0.33;
 const TASK_REWARD      = 0.17;
 const REFERRAL_BONUS   = 1.00;
-const MIN_WITHDRAWAL   = 1.00;
-const NGN_RATE         = 1500;
+const MIN_WITHDRAWAL   = 500 / NGN_RATE;  // ~$0.33
 const WITHDRAWAL_FEE   = 0.00;
 const PAYSTACK_SECRET  = process.env.PAYSTACK_SECRET_KEY;
 
@@ -148,6 +148,7 @@ exports.requestWithdrawal = async (req, res) => {
       // Paystack returns specific messages — surface them clearly
       const psMsg = (transferRes.message || "").toLowerCase();
 
+      console.error("Paystack transfer error:", JSON.stringify(transferRes));
       // Insufficient funds in our Paystack account
       if (
         psMsg.includes("insufficient") ||
@@ -247,14 +248,32 @@ exports.createCheckout = async (req, res) => {
       return res.status(400).json({ success: false, message: "Account already activated." });
     }
 
-    const amountInKobo = REGISTRATION_FEE * NGN_RATE * 100;
+    const amountInKobo = 500 * 100; // 50000 kobo = ₦500 // 150000 kobo = ₦1,500
 
     const response = await paystackRequest("POST", "/transaction/initialize", {
       email,
-      amount:       amountInKobo,
-      currency:     "NGN",
-      reference:    `PE-${userId}-${Date.now()}`,
-      callback_url: `${process.env.CLIENT_URL}/payment-success?ref=${response.data.reference}`,
+      amount:   amountInKobo,
+      currency: "NGN",
+      reference: `PE-${userId}-${Date.now()}`,
+
+      // ── Split payment config ──────────────────────────────
+      split: {
+        type: "percentage",
+        bearer_type: "account",
+        subaccounts: [
+          {
+            subaccount: "ACCT_w3z0tqg2smqk1h9", // PROMO EARN DIGITAL HUB - Sterling Bank
+            share: 45,
+          },
+          {
+            subaccount: "ACCT_kauokc340c1dbv7", // EMMANUEL - OPay
+            share: 44,
+          },
+        ],
+      },
+      // ─────────────────────────────────────────────────────
+
+      callback_url: `${process.env.CLIENT_URL}/payment-success`,
       metadata: {
         userId,
         custom_fields: [
@@ -265,9 +284,9 @@ exports.createCheckout = async (req, res) => {
     });
 
     if (!response.status) {
-      return res.status(400).json({ success: false, message: "Failed to initialize payment." });
+      console.error("Paystack error:", JSON.stringify(response));
+      return res.status(400).json({ success: false, message: response.message || "Failed to initialize payment." });
     }
-
     return res.status(200).json({
       success:   true,
       url:       response.data.authorization_url,
@@ -278,7 +297,6 @@ exports.createCheckout = async (req, res) => {
     return res.status(500).json({ success: false, message: "Failed to create payment." });
   }
 };
-
 // ─── VERIFY PAYMENT & ACTIVATE ACCOUNT ───────────────────────────────────────
 exports.verifyPayment = async (req, res) => {
   try {

@@ -23,85 +23,63 @@ const sanitizeUser = (user) => {
  */
 exports.googleSignIn = async (req, res) => {
   try {
-    const { idToken } = req.body;
+    // Accept raw user data instead of idToken
+    const { googleId, email, firstName, lastName, picture } = req.body;
 
-    if (!idToken) {
-      return res.status(400).json({ success: false, message: "Google ID token is required." });
-    }
-
-    // ── 1. Verify the token with Google ──────────────────────────────────────
-    let ticket;
-    try {
-      ticket = await googleClient.verifyIdToken({
-        idToken,
-        audience: process.env.GOOGLE_CLIENT_ID,
-      });
-    } catch (err) {
-      return res.status(401).json({ success: false, message: "Invalid or expired Google token. Please try again." });
-    }
-
-    const payload = ticket.getPayload();
-    const { sub: googleId, email, given_name: firstName, family_name: lastName, picture: avatar, email_verified } = payload;
-
-    if (!email_verified) {
-      return res.status(401).json({ success: false, message: "Google account email is not verified." });
+    if (!googleId || !email) {
+      return res.status(400).json({ success: false, message: "Google user data is required." });
     }
 
     const db = getDb();
 
-    // ── 2. Check if user already exists (by googleId or email) ───────────────
+    // Check if user exists by googleId
+    const googleSnap = await db.collection("users").where("googleId", "==", googleId).limit(1).get();
     let userDoc = null;
     let uid = null;
-
-    // First try by googleId (fastest, most accurate)
-    const googleSnap = await db.collection("users").where("googleId", "==", googleId).limit(1).get();
+    let isNewUser = false;
 
     if (!googleSnap.empty) {
-      // Existing Google user — just log them in
       userDoc = googleSnap.docs[0];
       uid = userDoc.id;
-      await userDoc.ref.update({ lastLoginAt: new Date(), avatar: avatar || userDoc.data().avatar });
+      await userDoc.ref.update({ lastLoginAt: new Date() });
     } else {
-      // Check if they registered before with the same email (email/phone signup)
       const emailSnap = await db.collection("users").where("email", "==", email.toLowerCase()).limit(1).get();
 
       if (!emailSnap.empty) {
-        // ── 3a. Existing user — link Google to their account ─────────────────
         userDoc = emailSnap.docs[0];
         uid = userDoc.id;
         await userDoc.ref.update({
           googleId,
-          avatar: avatar || userDoc.data().avatar,
-          emailVerified: true, // Google guarantees email is verified
+          avatar: picture || userDoc.data().avatar,
+          emailVerified: true,
           lastLoginAt: new Date(),
           updatedAt: new Date(),
         });
       } else {
-        // ── 3b. Brand new user — auto-register them ───────────────────────────
+        isNewUser = true;
         uid = uuidv4();
         const referralCode = `PE-${uid.split("-")[0].toUpperCase()}`;
-
         const newUser = {
           firstName: firstName || "User",
-          lastName: lastName || "",
-          fullName: `${firstName || "User"} ${lastName || ""}`.trim(),
-          email: email.toLowerCase(),
-          phone: null,
-          username: `user_${uid.split("-")[0]}`, // temporary username, they can update later
+          lastName:  lastName  || "",
+          fullName:  `${firstName || "User"} ${lastName || ""}`.trim(),
+          email:     email.toLowerCase(),
+          phone:     null,
+          username:  `user_${uid.split("-")[0]}`,
           googleId,
-          avatar,
-          emailVerified: true, // trusted from Google
-          phoneVerified: false,
-          passwordHash: null,  // no password for Google users
+          avatar:    picture || null,
+          emailVerified:  true,
+          phoneVerified:  false,
+          passwordHash:   null,
           referralCode,
-          referredBy: null,
-          isBanned: false,
-          authProvider: "google",
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          lastLoginAt: new Date(),
+          referredBy:     null,
+          isBanned:       false,
+          isActivated:    false,
+          authProvider:   "google",
+          createdAt:      new Date(),
+          updatedAt:      new Date(),
+          lastLoginAt:    new Date(),
         };
-
         await db.collection("users").doc(uid).set(newUser);
         userDoc = { id: uid, data: () => newUser };
       }
@@ -110,9 +88,6 @@ exports.googleSignIn = async (req, res) => {
     const userData = { uid, ...userDoc.data() };
     const tokens = buildAuthTokens(userData);
 
-    // Tell the frontend if this is a new user (so they can prompt for phone/username)
-    const isNewUser = !googleSnap.empty ? false : !emailSnap?.empty ? false : true;
-
     return res.status(200).json({
       success: true,
       message: isNewUser ? "Account created with Google! 🎉" : "Welcome back! 🚀",
@@ -120,7 +95,6 @@ exports.googleSignIn = async (req, res) => {
         ...tokens,
         user: sanitizeUser(userData),
         isNewUser,
-        // If new user, they should complete their profile (add phone, update username)
         requiresProfileCompletion: isNewUser || !userData.phone,
       },
     });

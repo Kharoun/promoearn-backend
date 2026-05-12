@@ -6,16 +6,14 @@ const getTransporter = () => {
   if (transporter) return transporter;
 
   transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT) || 587,
-    secure: false, // true for 465, false for 587
-    tls: { rejectUnauthorized: false },
+    host: "smtp.gmail.com",
+    port: 465,
+    secure: true,              // changed from false
     auth: {
       user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
+      pass: process.env.SMTP_PASS,  // now points to the correct App Password
     },
   });
-
   return transporter;
 };
 
@@ -106,7 +104,7 @@ const passwordResetTemplate = (otp, name) => `
 const sendVerificationEmail = async (to, otp, name) => {
   const t = getTransporter();
   await t.sendMail({
-    from: `"PromoEarn" <${process.env.EMAIL_FROM}>`,
+    from: `"PromoEarn"<${process.env.SMTP_USER}>`,
     to,
     subject: `${otp} — Verify your PromoEarn account`,
     html: verificationEmailTemplate(otp, name),
@@ -117,7 +115,7 @@ const sendVerificationEmail = async (to, otp, name) => {
 const sendPasswordResetEmail = async (to, otp, name) => {
   const t = getTransporter();
   await t.sendMail({
-    from: `"PromoEarn" <${process.env.EMAIL_FROM}>`,
+    from: `"PromoEarn" <${process.env.SMTP_USER}>`,
     to,
     subject: `${otp} — Reset your PromoEarn password`,
     html: passwordResetTemplate(otp, name),

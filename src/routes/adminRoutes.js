@@ -8,8 +8,13 @@ const {
   getPayments, processPayment,
   getReferrals,
 } = require("../controllers/adminController");
+const {
+  broadcastMessage,
+  sendSingleMessage,
+  getMessageHistory,
+} = require("../controllers/Adminmessagescontroller");
 
-// All routes are protected by adminMiddleware
+// All routes protected by adminMiddleware
 router.use(adminMiddleware);
 
 // Dashboard
@@ -32,5 +37,9 @@ router.put("/payments/:id", processPayment);
 // Referrals
 router.get("/referrals", getReferrals);
 
+// Messages
+router.post("/messages/broadcast", broadcastMessage);
+router.post("/messages/single",    sendSingleMessage);
+router.get("/messages/history",    getMessageHistory);
 
 module.exports = router;

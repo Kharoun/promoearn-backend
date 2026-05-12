@@ -770,42 +770,33 @@ exports.googleLogin = async (req, res) => {
       return res.status(400).json({ success: false, message: "Invalid Google data." });
     }
 
-    // Check if user already exists by email
     let userSnap = await db.collection("users").where("email", "==", email).limit(1).get();
     let uid, user;
 
     if (!userSnap.empty) {
-      // Existing user — log them in
       uid  = userSnap.docs[0].id;
       user = userSnap.docs[0].data();
-
-      // Update Google ID if not set
       if (!user.googleId) {
         await db.collection("users").doc(uid).update({ googleId, updatedAt: new Date() });
       }
     } else {
-      // New user — create account
       const username = email.split("@")[0].toLowerCase().replace(/[^a-z0-9_]/g, "_");
       const newUser  = {
-        firstName,
-        lastName,
-        email,
-        googleId,
-        picture:      picture || null,
+        firstName, lastName, email, googleId,
+        picture:       picture || null,
         username,
-        referralCode: username,
-        isActivated:  false,
-        isAdmin:      false,
-        isBanned:     false,
-        balance:      0,
-        totalEarned:  0,
+        referralCode:  username,
+        isActivated:   false,
+        isAdmin:       false,
+        isBanned:      false,
+        balance:       0,
+        totalEarned:   0,
         tasksCompleted: 0,
         referralsCount: 0,
-        authProvider: "google",
-        createdAt:    new Date(),
-        updatedAt:    new Date(),
+        authProvider:  "google",
+        createdAt:     new Date(),
+        updatedAt:     new Date(),
       };
-
       const docRef = await db.collection("users").add(newUser);
       uid  = docRef.id;
       user = newUser;
@@ -815,15 +806,14 @@ exports.googleLogin = async (req, res) => {
       return res.status(403).json({ success: false, message: "Account has been banned." });
     }
 
-    // Generate tokens
-    const accessToken  = jwt.sign({ uid, email }, process.env.JWT_SECRET, { expiresIn: "7d" });
-    const refreshToken = jwt.sign({ uid },        process.env.JWT_REFRESH_SECRET, { expiresIn: "30d" });
+    // ✅ Use buildAuthTokens — already imported, no jwt needed
+    const tokens = buildAuthTokens({ uid, email, phone: user.phone || null, username: user.username });
 
     return res.status(200).json({
       success: true,
       data: {
-        accessToken,
-        refreshToken,
+        accessToken:  tokens.accessToken,
+        refreshToken: tokens.refreshToken,
         user: { uid, ...user },
       },
     });
