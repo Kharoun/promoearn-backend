@@ -8,7 +8,7 @@ const {
   getMe, logout, changeUsername, changePassword, googleLogin,
   toggleTwoFA, deleteAccount,
 } = require("../controllers/authController");
-
+const verifyToken = require("../middleware/authMiddleware");
 const { protect } = require("../middleware/authMiddleware");
 const {
   validate,
