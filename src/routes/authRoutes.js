@@ -8,8 +8,7 @@ const {
   getMe, logout, changeUsername, changePassword, googleLogin,
   toggleTwoFA, deleteAccount,
 } = require("../controllers/authController");
-const verifyToken = require("../middleware/authMiddleware");
-const { protect } = require("../middleware/authMiddleware");
+const { protect } = require("../middleware/authMiddleware");  
 const {
   validate,
   registerRules,
@@ -52,7 +51,6 @@ router.post("/forgot-password",   forgotLimiter, forgotPassword);
 router.post("/verify-reset-otp",  forgotLimiter, verifyResetOtp);
 router.post("/reset-password",    forgotLimiter, resetPassword);
 router.post("/google",            authLimiter,   googleLogin);
-router.delete("/delete-account", verifyToken, authController.deleteAccount);
 
 // ─── Protected Routes ─────────────────────────────────────────────────────────
 
