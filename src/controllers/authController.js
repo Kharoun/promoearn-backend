@@ -836,3 +836,42 @@ const maskIdentifier = (identifier, type) => {
   }
   return `+***${identifier.slice(-4)}`;
 };
+// ─── DELETE ACCOUNT ───────────────────────────────────────────────────────────
+exports.deleteAccount = async (req, res) => {
+  try {
+    const uid = req.user?.uid;
+    if (!uid) {
+      return res.status(401).json({ success: false, message: "Not authenticated." });
+    }
+
+    const db = getDb();
+
+    // Delete user document
+    await db.collection("users").doc(uid).delete();
+
+    // Clean up related data in parallel
+    const cleanup = [];
+
+    // Delete user's task completions
+    const completionsSnap = await db.collection("completedTasks").where("userId", "==", uid).get();
+    completionsSnap.forEach(doc => cleanup.push(doc.ref.delete()));
+
+    // Delete user's notifications
+    const notifSnap = await db.collection("notifications").where("userId", "==", uid).get();
+    notifSnap.forEach(doc => cleanup.push(doc.ref.delete()));
+
+    // Delete user's payout requests
+    const payoutSnap = await db.collection("payments").where("userId", "==", uid).get();
+    payoutSnap.forEach(doc => cleanup.push(doc.ref.delete()));
+
+    await Promise.all(cleanup);
+
+    return res.status(200).json({
+      success: true,
+      message: "Account permanently deleted.",
+    });
+  } catch (err) {
+    console.error("deleteAccount error:", err);
+    return res.status(500).json({ success: false, message: "Failed to delete account. Please try again." });
+  }
+};

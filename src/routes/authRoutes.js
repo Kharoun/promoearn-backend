@@ -3,20 +3,10 @@ const rateLimit  = require("express-rate-limit");
 const router     = express.Router();
 
 const {
-  register,
-  login,
-  verifyEmail,
-  verifyPhone,
-  resendOtp,
-  refreshToken,
-  forgotPassword,
-  verifyResetOtp,
-  resetPassword,
-  getMe,
-  logout,
-  changeUsername,
-  changePassword,
-  googleLogin,
+  register, login, verifyEmail, verifyPhone, resendOtp,
+  refreshToken, forgotPassword, verifyResetOtp, resetPassword,
+  getMe, logout, changeUsername, changePassword, googleLogin,
+  toggleTwoFA, deleteAccount,
 } = require("../controllers/authController");
 
 const { protect } = require("../middleware/authMiddleware");
@@ -62,6 +52,7 @@ router.post("/forgot-password",   forgotLimiter, forgotPassword);
 router.post("/verify-reset-otp",  forgotLimiter, verifyResetOtp);
 router.post("/reset-password",    forgotLimiter, resetPassword);
 router.post("/google",            authLimiter,   googleLogin);
+router.delete("/delete-account", verifyToken, authController.deleteAccount);
 
 // ─── Protected Routes ─────────────────────────────────────────────────────────
 
@@ -69,5 +60,7 @@ router.get("/me",                 protect, getMe);
 router.post("/logout",            protect, logout);
 router.post("/change-username",   protect, changeUsername);
 router.post("/change-password",   protect, changePassword);
+router.post("/toggle-2fa",        protect, toggleTwoFA);       // ← add this
+router.delete("/delete-account",  protect, deleteAccount);     // ← add this
 
 module.exports = router;
