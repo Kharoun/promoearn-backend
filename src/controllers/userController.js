@@ -166,8 +166,8 @@ exports.getLeaderboard = async (req, res) => {
         };
       })
       .sort((a, b) => b.totalEarned - a.totalEarned)
-      .slice(0, 10)
-      .map((u, i) => ({ ...u, rank: i + 1 }));
+.slice(0, 15)
+.map((u, i) => ({ ...u, rank: i + 1 }));
 
     return res.status(200).json({ success: true, data: { leaders } });
   } catch (err) {

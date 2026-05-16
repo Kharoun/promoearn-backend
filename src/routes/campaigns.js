@@ -93,8 +93,9 @@ router.post("/create-payment", verifyToken, async (req, res) => {
 
     const NGN_RATE    = 1500;
     const amountNGN   = Math.round(parseFloat(amount) * NGN_RATE);   // USD → NGN
+    const amountKobo  = amountNGN * 100;   // ✅ 
     const reference   = `pe_campaign_${campaignId}_${Date.now()}`;
-    const callbackUrl = process.env.PAYSTACK_CALLBACK_URL || "https://yourapp.com/payment-success";
+    const callbackUrl = process.env.PAYSTACK_CALLBACK_URL || "https://promoearn-backend.onrender.com/payment-success";
 
     const paystackRes = await axios.post(
       "https://api.paystack.co/transaction/initialize",
