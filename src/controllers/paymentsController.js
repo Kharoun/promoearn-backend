@@ -5,12 +5,12 @@ const https = require("https");
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const NGN_RATE         = 1500;
-const REGISTRATION_FEE = 500 / NGN_RATE;  // ~$0.33
+const REGISTRATION_FEE = 4500 / NGN_RATE;  // = $3.00
 const WELCOME_BONUS    = 0.33;
 const TASK_REWARD      = 0.17;
-const REFERRAL_BONUS   = 1.00;
-const MIN_WITHDRAWAL   = 500 / NGN_RATE;  // ~$0.33
-const WITHDRAWAL_FEE   = 0.00;
+const REFERRAL_BONUS   = 1.33;
+const MIN_WITHDRAWAL = 5010 / NGN_RATE;  // = $3.34
+const WITHDRAWAL_FEE   = 0.067;
 const PAYSTACK_SECRET  = process.env.PAYSTACK_SECRET_KEY;
 
 // ─── Helper: call Paystack API ────────────────────────────────────────────────
@@ -248,7 +248,7 @@ exports.createCheckout = async (req, res) => {
       return res.status(400).json({ success: false, message: "Account already activated." });
     }
 
-    const amountInKobo = 500 * 100; // 50000 kobo = ₦500 // 150000 kobo = ₦1,500
+    const amountInKobo = 4500 * 100; // 450000 kobo = ₦4,500 (~$3)
 
     const response = await paystackRequest("POST", "/transaction/initialize", {
       email,
@@ -434,7 +434,7 @@ exports.paystackWebhook = async (req, res) => {
 
     const hash = crypto
       .createHmac("sha512", secret)
-      .update(JSON.stringify(req.body))
+      .update(req.body)
       .digest("hex");
 
     if (hash !== req.headers["x-paystack-signature"]) {
@@ -443,8 +443,7 @@ exports.paystackWebhook = async (req, res) => {
 
     // Respond 200 immediately so Paystack doesn't retry
     res.status(200).json({ received: true });
-
-    const { event, data } = req.body;
+    const { event, data } = JSON.parse(req.body.toString());
     const db = getDb();
 
     // ── charge.success: activate account if not yet activated ──────────────

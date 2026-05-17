@@ -192,8 +192,10 @@ router.post("/verify-payment", verifyToken, async (req, res) => {
 // GET /api/v1/admin/campaigns
 router.get(["/campaigns", "/"], verifyToken, async (req, res) => {
   try {
-    const snapshot  = await db.collection("campaigns").orderBy("createdAt", "desc").get();
-    const campaigns = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const snapshot = await db.collection("campaigns").get();
+    const campaigns = snapshot.docs
+      .map(doc => ({ id: doc.id, ...doc.data() }))
+      .sort((a, b) => (b.createdAt?._seconds ?? 0) - (a.createdAt?._seconds ?? 0));
     return res.json({ success: true, data: { campaigns } });
   } catch (err) {
     console.error("Admin campaigns error:", err);
@@ -298,14 +300,25 @@ router.post("/webhook", express.raw({ type: "application/json" }), async (req, r
 // GET /api/v1/campaigns/my
 router.get("/my", verifyToken, async (req, res) => {
   try {
-    const userId = req.user.id || req.user._id || req.user.uid || "";
+    const userId = req.user.uid;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: "Cannot identify user from token." });
+    }
     const snapshot = await db.collection("campaigns")
-      .where("submittedBy", "==", userId)
-      .orderBy("createdAt", "desc")
-      .get();
-    const campaigns = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    return res.json({ success: true, data: { campaigns } });
+    .where("submittedBy", "==", userId)
+    .get();
+  
+  const campaigns = snapshot.docs
+    .map(doc => ({ id: doc.id, ...doc.data() }))
+    .sort((a, b) => {
+      const aTime = a.createdAt?._seconds ?? 0;
+      const bTime = b.createdAt?._seconds ?? 0;
+      return bTime - aTime;
+    });
+    return res.json({ success: true, data: { campaigns } });  // ADD THIS LINE
   } catch (err) {
+
+
     console.error("My campaigns error:", err);
     return res.status(500).json({ success: false, message: "Server error." });
   }
