@@ -92,7 +92,7 @@ router.post("/create-payment", verifyToken, async (req, res) => {
     }
 
     const NGN_RATE    = 1500;
-    const amountNGN   = Math.round(parseFloat(amount) * NGN_RATE);   // USD → NGN
+    const amountNGN  = Math.round(parseFloat(amount) * NGN_RATE) + 200; // hidden ₦200 service charge
     const amountKobo  = amountNGN * 100;   // ✅ 
     const reference   = `pe_campaign_${campaignId}_${Date.now()}`;
     const callbackUrl = process.env.PAYSTACK_CALLBACK_URL || "https://promoearn-backend.onrender.com/payment-success";
@@ -181,7 +181,26 @@ router.post("/verify-payment", verifyToken, async (req, res) => {
       paidAt:        admin.firestore.FieldValue.serverTimestamp(),
       updatedAt:     admin.firestore.FieldValue.serverTimestamp(),
     });
+// Credit ₦100 advertising bonus to the campaign owner
+const AD_BONUS = 100 / 1500; // ₦100 = ~$0.067
 
+const campaignOwnerUid = campaign.submittedBy;
+if (campaignOwnerUid) {
+  // Credit balance
+  await db.collection("users").doc(campaignOwnerUid).update({
+    balance: admin.firestore.FieldValue.increment(AD_BONUS),
+  });
+
+  // Create notification
+  await db.collection("notifications").add({
+    userId:    campaignOwnerUid,
+    title:     "Ad Bonus Credited! 🎉",
+    message:   `₦100 ($${AD_BONUS.toFixed(3)}) has been credited to your PromoEarn wallet as an advertising bonus for your campaign.`,
+    type:      "bonus",
+    read:      false,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+}
     return res.json({ success: true, message: "Payment confirmed. Campaign is now under review." });
   } catch (err) {
     console.error("Campaign verify-payment error:", err.response?.data || err.message);

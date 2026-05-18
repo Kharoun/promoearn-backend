@@ -6,11 +6,11 @@ const https = require("https");
 // ─── Constants ────────────────────────────────────────────────────────────────
 const NGN_RATE         = 1500;
 const REGISTRATION_FEE = 4500 / NGN_RATE;  // = $3.00
-const WELCOME_BONUS    = 0.33;
+const WELCOME_BONUS    = 0;
 const TASK_REWARD      = 0.17;
 const REFERRAL_BONUS   = 1.33;
 const MIN_WITHDRAWAL = 5010 / NGN_RATE;  // = $3.34
-const WITHDRAWAL_FEE   = 0.067;
+const WITHDRAWAL_FEE = 100 / NGN_RATE;  // ₦100 = ~$0.067
 const PAYSTACK_SECRET  = process.env.PAYSTACK_SECRET_KEY;
 
 // ─── Helper: call Paystack API ────────────────────────────────────────────────
@@ -487,7 +487,7 @@ exports.paystackWebhook = async (req, res) => {
 
       await createNotification(userId, {
         title: "🎉 Account Activated!",
-        body:  "Welcome to PromoEarn! Your $0.33 welcome bonus has been added.",
+        body:  "Account activated! Complete the available tasks to start earning.",
         type:  "paymentAlerts",
       });
 

@@ -7,6 +7,8 @@ const morgan = require("morgan");
 const { initFirebase } = require("./config/firebase");
 const authRoutes = require("./routes/authRoutes");
 
+app.set('trust proxy', 1);
+
 // ─── Initialize Firebase ──────────────────────────────────────────────────────
 initFirebase();
 
