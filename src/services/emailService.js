@@ -58,7 +58,7 @@ const passwordResetTemplate = (otp, name) => `
 
 const sendVerificationEmail = async (to, otp, name) => {
   const { data, error } = await resend.emails.send({
-    from: "PromoEarn <onboarding@resend.dev>",
+    from: "PromoEarn <noreply@promoearnapp.com>",
     to,
     subject: `${otp} — Verify your PromoEarn account`,
     html: verificationEmailTemplate(otp, name),
@@ -72,7 +72,7 @@ const sendVerificationEmail = async (to, otp, name) => {
 
 const sendPasswordResetEmail = async (to, otp, name) => {
   const { data, error } = await resend.emails.send({
-    from: "PromoEarn <onboarding@resend.dev>",
+    from: "PromoEarn <noreply@promoearnapp.com>",
     to,
     subject: `${otp} — Reset your PromoEarn password`,
     html: passwordResetTemplate(otp, name),
