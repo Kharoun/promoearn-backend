@@ -67,16 +67,16 @@ const forgotPasswordRules = [
 ];
 
 const resetPasswordRules = [
-  body("identifier")
+  body("email")
     .trim()
-    .notEmpty()
-    .withMessage("Identifier is required")
-    .customSanitizer((value) => {
-      if (!value.includes("@")) return normalizePhone(value);
-      return value;
-    }),
-  body("otp").trim().isLength({ min: 6, max: 6 }).isNumeric().withMessage("Valid 6-digit OTP required"),
-  body("newPassword").isLength({ min: 6 }).withMessage("Password must be at least 6 characters"),
+    .notEmpty().withMessage("Email is required")
+    .isEmail().withMessage("Valid email is required")
+    .normalizeEmail(),
+  body("resetToken")
+    .trim()
+    .notEmpty().withMessage("Reset token is required"),
+  body("newPassword")
+    .isLength({ min: 6 }).withMessage("Password must be at least 6 characters"),
 ];
 
 module.exports = {
