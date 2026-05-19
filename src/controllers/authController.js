@@ -615,7 +615,6 @@ exports.toggleTwoFA = async (req, res) => {
     return res.status(500).json({ success: false, message: "Failed to update 2FA setting." });
   }
 };
-hafafaffafagggggggggggggggggggggggggggggggggggggggggggggggggggggggg
 
 ///
 exports.googleLogin = async (req, res) => {
