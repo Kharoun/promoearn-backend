@@ -112,12 +112,14 @@ exports.register = async (req, res) => {
 
     await db.collection("users").doc(uid).set(newUser);
 
-    try {
-      const emailOtp = await storeOtp(email.toLowerCase(), "email_verification");
-      await sendVerificationEmail(email, emailOtp, firstName);
-    } catch (emailErr) {
-      console.error("Email OTP send failed:", emailErr); // full error, not just message
-    }
+    // In register controller, after creating the user:
+try {
+  const otp = await storeOtp(email, "email_verification");
+  await sendVerificationEmail(email, otp, firstName);
+} catch (emailErr) {
+  console.error("EMAIL SEND FAILED:", emailErr); // ← add this log
+  // Don't silently swallow — optionally return error or continue
+}
     if (phone) {
       try {
         await sendPhoneOtp(phone);

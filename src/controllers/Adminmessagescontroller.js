@@ -1,15 +1,6 @@
 const { getDb }       = require("../config/firebase");
-const nodemailer      = require("nodemailer");
- 
-const transporter = nodemailer.createTransport({
-  host:   process.env.SMTP_HOST,
-  port:   parseInt(process.env.SMTP_PORT),
-  secure: process.env.SMTP_SECURE === "true",
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
+const { Resend } = require("resend");
+const resend = new Resend(process.env.RESEND_API_KEY);
  
 // ── Send to ALL users ─────────────────────────────────────────────────────────
 exports.broadcastMessage = async (req, res) => {
@@ -41,10 +32,9 @@ exports.broadcastMessage = async (req, res) => {
             .replace(/{lastName}/g,  user.lastName  || "")
             .replace(/{username}/g,  user.username  || "");
  
-          await transporter.sendMail({
-            from:    process.env.EMAIL_FROM,
-            to:      user.email,
-            subject,
+            await resend.emails.send({ from: "PromoEarn <onboarding@resend.dev>",
+             to, 
+             subject, 
             html: `
               <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px">
                 <div style="background:#1A56DB;padding:20px;border-radius:12px 12px 0 0;text-align:center">
@@ -122,10 +112,7 @@ exports.sendSingleMessage = async (req, res) => {
       .replace(/{lastName}/g,  user?.lastName  || "")
       .replace(/{username}/g,  user?.username  || "");
  
-    await transporter.sendMail({
-      from:    process.env.EMAIL_FROM,
-      to:      recipientEmail,
-      subject,
+      await resend.emails.send({ from: "PromoEarn <onboarding@resend.dev>", to, subject,
       html: `
         <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px">
           <div style="background:#1A56DB;padding:20px;border-radius:12px 12px 0 0;text-align:center">
