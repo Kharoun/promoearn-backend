@@ -59,14 +59,11 @@ const otpRules = [
 ];
 
 const forgotPasswordRules = [
-  body("identifier")
+  body("email")
     .trim()
-    .notEmpty()
-    .withMessage("Email or phone number is required")
-    .customSanitizer((value) => {
-      if (!value.includes("@")) return normalizePhone(value);
-      return value;
-    }),
+    .notEmpty().withMessage("Email is required")
+    .isEmail().withMessage("Please enter a valid email address")
+    .normalizeEmail(),
 ];
 
 const resetPasswordRules = [
