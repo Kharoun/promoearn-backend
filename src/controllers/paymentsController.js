@@ -95,10 +95,10 @@ exports.requestWithdrawal = async (req, res) => {
     if (!amount || parseFloat(amount) < MIN_WITHDRAWAL) {
       return res.status(400).json({
         success: false,
-        message: `Minimum withdrawal is $${MIN_WITHDRAWAL}.`,
+        message: `Minimum withdrawal is $${MIN_WITHDRAWAL.toFixed(2)}.`,
       });
     }
-    if (!accountNumber || !bankCode || !bankName || !accountName) {
+    if (!accountNumber || !bankName || !accountName) {
       return res.status(400).json({ success: false, message: "All bank details are required." });
     }
 
@@ -115,120 +115,58 @@ exports.requestWithdrawal = async (req, res) => {
 
     const withdrawAmt    = parseFloat(amount);
     const amountAfterFee = withdrawAmt - WITHDRAWAL_FEE;
-    const amountNGN      = Math.round(amountAfterFee * NGN_RATE * 100); // kobo
+    const amountNGN      = amountAfterFee * NGN_RATE;
 
-    // ── 3. Create Paystack transfer recipient ───────────────────────────────
-    const recipientRes = await paystackRequest("POST", "/transferrecipient", {
-      type:           "nuban",
-      name:           accountName,
-      account_number: accountNumber,
-      bank_code:      bankCode,
-      currency:       "NGN",
-    });
-
-    if (!recipientRes.status) {
-      return res.status(400).json({
-        success: false,
-        message: "Failed to create transfer recipient. Please verify your account details.",
-      });
-    }
-
-    const recipientCode = recipientRes.data.recipient_code;
-
-    // ── 4. Initiate Paystack transfer ───────────────────────────────────────
-    const transferRes = await paystackRequest("POST", "/transfer", {
-      source:    "balance",
-      amount:    amountNGN,
-      recipient: recipientCode,
-      reason:    `PromoEarn withdrawal for @${user.username}`,
-    });
-
-    // ── 5. Handle Paystack-level errors ─────────────────────────────────────
-    if (!transferRes.status) {
-      // Paystack returns specific messages — surface them clearly
-      const psMsg = (transferRes.message || "").toLowerCase();
-
-      console.error("Paystack transfer error:", JSON.stringify(transferRes));
-      // Insufficient funds in our Paystack account
-      if (
-        psMsg.includes("insufficient") ||
-        psMsg.includes("balance") ||
-        psMsg.includes("funds")
-      ) {
-        return res.status(503).json({
-          success: false,
-          message: "Withdrawals are temporarily unavailable due to a system issue. Please try again later or contact support.",
-        });
-      }
-
-      // OTP / 2FA required (Paystack live accounts need OTP disabled or transfer OTP approved)
-      if (psMsg.includes("otp") || psMsg.includes("verification")) {
-        return res.status(503).json({
-          success: false,
-          message: "Transfer requires additional verification. Please contact support.",
-        });
-      }
-
-      return res.status(400).json({
-        success: false,
-        message: transferRes.message || "Transfer failed. Please try again.",
-      });
-    }
-
-    const transferCode   = transferRes.data.transfer_code;
-    const transferStatus = transferRes.data.status; // "pending" or "success"
-
-    // ── 6. Deduct balance immediately ───────────────────────────────────────
+    // ── 3. Deduct balance immediately (hold the funds) ──────────────────────
     await db.collection("users").doc(uid).update({
       balance:   (user.balance || 0) - withdrawAmt,
       updatedAt: new Date(),
     });
 
-    // ── 7. Log withdrawal record ────────────────────────────────────────────
-    await db.collection("payments").add({
+    // ── 4. Save withdrawal request as "pending" — no Paystack transfer yet ──
+    const paymentRef = await db.collection("payments").add({
       userId:        uid,
       username:      user.username,
       email:         user.email,
       amount:        withdrawAmt,
       amountAfterFee,
-      amountNGN:     amountAfterFee * NGN_RATE,
+      amountNGN,
       accountNumber,
-      bankCode,
+      bankCode:      bankCode || "",
       bankName,
       accountName,
-      recipientCode,
-      transferCode,
-      status:        transferStatus === "success" ? "completed" : "pending",
+      status:        "pending",   // ← admin must approve before transfer fires
       createdAt:     new Date(),
+      updatedAt:     new Date(),
     });
 
-    // ── 8. Log transaction ──────────────────────────────────────────────────
+    // ── 5. Log transaction ──────────────────────────────────────────────────
     await db.collection("transactions").add({
       userId:      uid,
       type:        "withdrawal",
-      description: `Withdrawal to ${bankName} - ${accountName}`,
+      description: `Withdrawal request to ${bankName} - ${accountName}`,
       amount:      -withdrawAmt,
-      status:      transferStatus === "success" ? "completed" : "pending",
-      transferCode,
+      status:      "pending",
+      paymentId:   paymentRef.id,
       createdAt:   new Date(),
     });
 
-    // ── 9. Notify user ──────────────────────────────────────────────────────
+    // ── 6. Notify user ──────────────────────────────────────────────────────
     await createNotification(uid, {
-      title: "💸 Withdrawal Initiated",
-      body:  `Your withdrawal of $${amountAfterFee.toFixed(2)} (₦${(amountAfterFee * NGN_RATE).toLocaleString()}) to ${bankName} is being processed.`,
+      title: "💸 Withdrawal Request Received",
+      body:  `Your withdrawal of $${amountAfterFee.toFixed(2)} (₦${amountNGN.toLocaleString()}) to ${bankName} is being reviewed. You'll receive it within 24 hours.`,
       type:  "paymentAlerts",
     });
 
     return res.status(201).json({
       success: true,
-      message: `Withdrawal of $${amountAfterFee.toFixed(2)} (₦${(amountAfterFee * NGN_RATE).toLocaleString()}) sent to ${bankName}. Arrives within 24–48 hrs.`,
-      data: { transferCode, status: transferStatus },
+      message: `Withdrawal request submitted! You'll receive $${amountAfterFee.toFixed(2)} (₦${amountNGN.toLocaleString()}) in your ${bankName} account within 24 hours.`,
+      data: { paymentId: paymentRef.id, status: "pending" },
     });
 
   } catch (err) {
     console.error("Withdrawal error:", err);
-    return res.status(500).json({ success: false, message: "Failed to process withdrawal. Please try again." });
+    return res.status(500).json({ success: false, message: "Failed to submit withdrawal request. Please try again." });
   }
 };
 

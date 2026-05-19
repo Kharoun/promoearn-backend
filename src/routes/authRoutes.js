@@ -47,9 +47,9 @@ router.post("/verify-email",      otpLimiter,    otpRules,             validate,
 router.post("/verify-phone",      otpLimiter,    otpRules,             validate, verifyPhone);
 router.post("/resend-otp",        otpLimiter,    resendOtp);
 router.post("/refresh-token",     refreshToken);
-router.post("/forgot-password",   forgotLimiter, forgotPassword);
-router.post("/verify-reset-otp",  forgotLimiter, verifyResetOtp);
-router.post("/reset-password",    forgotLimiter, resetPassword);
+router.post("/forgot-password",    authController.forgotPassword);
+router.post("/verify-reset-otp",   authController.verifyResetOtp);
+router.post("/reset-password",     authController.resetPassword);
 router.post("/google",            authLimiter,   googleLogin);
 
 // ─── Protected Routes ─────────────────────────────────────────────────────────

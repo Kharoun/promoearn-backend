@@ -205,38 +205,145 @@ exports.getPayments = async (req, res) => {
 
 exports.processPayment = async (req, res) => {
   try {
-    const { id } = req.params;
-    const { action } = req.body; // "approve" or "reject"
-    const db = getDb();
+    const { id }     = req.params;
+    const { action } = req.body;
+    const db         = getDb();
+    const admin      = require("firebase-admin");
+    const axios      = require("axios");
+    const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY;
 
-    const doc = await db.collection("payments").doc(id).get();
-    if (!doc.exists) {
+    if (!["approve", "reject"].includes(action)) {
+      return res.status(400).json({ success: false, message: "Action must be 'approve' or 'reject'." });
+    }
+
+    const paymentDoc = await db.collection("payments").doc(id).get();
+    if (!paymentDoc.exists) {
       return res.status(404).json({ success: false, message: "Payment not found." });
     }
 
-    const status = action === "approve" ? "approved" : "rejected";
-    await db.collection("payments").doc(id).update({
-      status,
-      processedAt: new Date(),
-      processedBy: req.user.uid,
-    });
+    const payment = paymentDoc.data();
 
-    // If rejected, refund the user's balance
-    if (action === "reject") {
-      const payment = doc.data();
-      const userDoc = await db.collection("users").doc(payment.userId).get();
-      if (userDoc.exists) {
-        const currentBalance = userDoc.data().balance || 0;
-        await db.collection("users").doc(payment.userId).update({
-          balance: currentBalance + payment.amount,
-        });
-      }
+    if (payment.status !== "pending") {
+      return res.status(400).json({ success: false, message: "This payment has already been processed." });
     }
 
-    return res.status(200).json({
-      success: true,
-      message: `Payment ${status} successfully.`,
+    // ── REJECT: refund balance, mark rejected ───────────────────────────────
+    if (action === "reject") {
+      await db.collection("payments").doc(id).update({
+        status:      "rejected",
+        processedAt: new Date(),
+        processedBy: req.user.uid,
+        updatedAt:   new Date(),
+      });
+
+      const userDoc = await db.collection("users").doc(payment.userId).get();
+      if (userDoc.exists) {
+        await db.collection("users").doc(payment.userId).update({
+          balance:   (userDoc.data().balance || 0) + payment.amount,
+          updatedAt: new Date(),
+        });
+
+        const txSnap = await db.collection("transactions")
+          .where("paymentId", "==", id).limit(1).get();
+        if (!txSnap.empty) {
+          await txSnap.docs[0].ref.update({ status: "rejected" });
+        }
+
+        await db.collection("notifications").add({
+          userId:    payment.userId,
+          title:     "❌ Withdrawal Rejected",
+          message:   `Your withdrawal of $${payment.amount.toFixed(2)} was rejected and your balance has been refunded. Contact support if you have questions.`,
+          type:      "bonus",
+          read:      false,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      }
+
+      return res.json({ success: true, message: "Payment rejected and balance refunded." });
+    }
+
+    // ── APPROVE: fire Paystack transfer now ─────────────────────────────────
+
+    // Step A: create transfer recipient
+    let recipientCode;
+    try {
+      const recipientRes = await axios.post(
+        "https://api.paystack.co/transferrecipient",
+        {
+          type:           "nuban",
+          name:           payment.accountName,
+          account_number: payment.accountNumber,
+          bank_code:      payment.bankCode || "",
+          currency:       "NGN",
+        },
+        { headers: { Authorization: `Bearer ${PAYSTACK_SECRET}` } }
+      );
+      recipientCode = recipientRes.data?.data?.recipient_code;
+      if (!recipientCode) throw new Error("No recipient code returned");
+    } catch (err) {
+      console.error("Recipient creation failed:", err.response?.data || err.message);
+      return res.status(502).json({ success: false, message: "Failed to create transfer recipient. Check bank details." });
+    }
+
+    // Step B: initiate transfer
+    const amountKobo = Math.round((payment.amountAfterFee || payment.amount) * 1500 * 100);
+    let transferCode, transferStatus;
+    try {
+      const transferRes = await axios.post(
+        "https://api.paystack.co/transfer",
+        {
+          source:    "balance",
+          amount:    amountKobo,
+          recipient: recipientCode,
+          reason:    `PromoEarn withdrawal for @${payment.username}`,
+        },
+        { headers: { Authorization: `Bearer ${PAYSTACK_SECRET}` } }
+      );
+
+      if (!transferRes.data?.status) {
+        const psMsg = transferRes.data?.message || "Transfer failed";
+        console.error("Paystack transfer failed:", psMsg);
+        return res.status(502).json({ success: false, message: `Paystack: ${psMsg}` });
+      }
+
+      transferCode   = transferRes.data.data.transfer_code;
+      transferStatus = transferRes.data.data.status;
+    } catch (err) {
+      console.error("Transfer failed:", err.response?.data || err.message);
+      return res.status(502).json({ success: false, message: "Transfer failed. Check Paystack balance and try again." });
+    }
+
+    // Step C: mark approved in Firestore
+    await db.collection("payments").doc(id).update({
+      status:        "approved",
+      recipientCode,
+      transferCode,
+      transferStatus,
+      processedAt:   new Date(),
+      processedBy:   req.user.uid,
+      updatedAt:     new Date(),
     });
+
+    const txSnap = await db.collection("transactions")
+      .where("paymentId", "==", id).limit(1).get();
+    if (!txSnap.empty) {
+      await txSnap.docs[0].ref.update({ status: "approved", transferCode });
+    }
+
+    await db.collection("notifications").add({
+      userId:    payment.userId,
+      title:     "✅ Withdrawal Approved!",
+      message:   `Your withdrawal of $${(payment.amountAfterFee || payment.amount).toFixed(2)} (₦${((payment.amountNGN) || 0).toLocaleString()}) to ${payment.bankName} has been approved and sent. Arrives within 24 hours.`,
+      type:      "bonus",
+      read:      false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    return res.json({
+      success: true,
+      message: `Transfer sent to ${payment.accountName} at ${payment.bankName}.`,
+    });
+
   } catch (err) {
     console.error("Process payment error:", err);
     return res.status(500).json({ success: false, message: "Failed to process payment." });

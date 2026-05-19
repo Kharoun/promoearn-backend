@@ -1,3 +1,4 @@
+const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 const { v4: uuidv4 } = require("uuid");
 const { getDb } = require("../config/firebase");
@@ -115,9 +116,8 @@ exports.register = async (req, res) => {
       const emailOtp = await storeOtp(email.toLowerCase(), "email_verification");
       await sendVerificationEmail(email, emailOtp, firstName);
     } catch (emailErr) {
-      console.warn("Email OTP not sent (non-fatal):", emailErr.message);
+      console.error("Email OTP send failed:", emailErr); // full error, not just message
     }
-
     if (phone) {
       try {
         await sendPhoneOtp(phone);
@@ -335,82 +335,142 @@ exports.refreshToken = async (req, res) => {
 
 // ─── FORGOT PASSWORD ──────────────────────────────────────────────────────────
 
+// ─── FORGOT PASSWORD — Send OTP ───────────────────────────────────────────
 exports.forgotPassword = async (req, res) => {
   try {
-    const { identifier } = req.body;
-    const type = detectIdentifierType(identifier.trim());
+    const db = getDb();
+    const { email } = req.body;
 
-    if (!type) {
-      return res.status(400).json({ success: false, message: "Enter a valid email or phone number." });
+    if (!email) {
+      return res.status(400).json({ success: false, message: "Email is required." });
     }
 
-    const user = await findUserByIdentifier(
-      type === "email" ? identifier.toLowerCase() : identifier,
-      type
-    );
+    const snap = await db.collection("users")
+      .where("email", "==", email.toLowerCase().trim())
+      .limit(1).get();
 
-    if (!user) {
-      return res.status(200).json({
-        success: true,
-        message: "If an account exists, a reset code has been sent.",
-      });
+    // Always return success to avoid revealing whether email exists
+    if (snap.empty) {
+      return res.status(200).json({ success: true, message: "If this email is registered, you will receive a reset code." });
     }
 
-    if (type === "email") {
-      const otp = await storeOtp(identifier.toLowerCase(), "password_reset");
-      await sendPasswordResetEmail(identifier, otp, user.firstName);
-    } else {
-      await sendPhoneOtp(identifier);
-    }
+    const uid  = snap.docs[0].id;
+    const user = snap.docs[0].data();
+
+    const otp = await storeOtp(email.toLowerCase().trim(), "password_reset");
+    await sendPasswordResetEmail(email, otp, user.firstName || "User");
 
     return res.status(200).json({
       success: true,
-      message: "A reset code has been sent.",
-      data: { type, maskedIdentifier: maskIdentifier(identifier, type) },
+      message: "If this email is registered, you will receive a reset code.",
     });
   } catch (err) {
     console.error("Forgot password error:", err);
-    return res.status(500).json({ success: false, message: "Failed to send reset code." });
+    return res.status(500).json({ success: false, message: "Failed to send reset code. Please try again." });
   }
 };
 
-// ─── RESET PASSWORD ───────────────────────────────────────────────────────────
-
-exports.resetPassword = async (req, res) => {
+// ─── VERIFY RESET OTP ─────────────────────────────────────────────────────
+exports.verifyResetOtp = async (req, res) => {
   try {
-    const { identifier, otp, newPassword } = req.body;
-    const type = detectIdentifierType(identifier.trim());
     const db = getDb();
+    const { email, otp } = req.body;
 
-    let otpValid = false;
-
-    if (type === "email") {
-      const result = await verifyOtp(identifier.toLowerCase(), "password_reset", otp);
-      if (!result.valid) return res.status(400).json({ success: false, message: result.error });
-      otpValid = true;
-    } else if (type === "phone") {
-      otpValid = await verifyPhoneOtp(identifier, otp);
-      if (!otpValid) return res.status(400).json({ success: false, message: "Incorrect or expired OTP." });
+    if (!email || !otp) {
+      return res.status(400).json({ success: false, message: "Email and OTP are required." });
     }
 
-    if (!otpValid) return res.status(400).json({ success: false, message: "Invalid OTP." });
+    const result = await verifyOtp(email.toLowerCase().trim(), "password_reset", otp);
+    if (!result.valid) {
+      return res.status(400).json({ success: false, message: result.error });
+    }
 
-    const user = await findUserByIdentifier(
-      type === "email" ? identifier.toLowerCase() : identifier,
-      type
-    );
-    if (!user) return res.status(404).json({ success: false, message: "User not found." });
+    // Generate a short-lived reset token
+    const crypto = require("crypto");
+    const resetToken = crypto.randomBytes(32).toString("hex");
+    const tokenHash  = crypto.createHash("sha256").update(resetToken).digest("hex");
 
-    const passwordHash = await bcrypt.hash(newPassword, 12);
-    await db.collection("users").doc(user.uid).update({ passwordHash, updatedAt: new Date() });
+    const snap = await db.collection("users")
+      .where("email", "==", email.toLowerCase().trim())
+      .limit(1).get();
+
+    if (snap.empty) {
+      return res.status(404).json({ success: false, message: "User not found." });
+    }
+
+    await db.collection("users").doc(snap.docs[0].id).update({
+      passwordResetToken:       tokenHash,
+      passwordResetTokenExpiry: new Date(Date.now() + 10 * 60 * 1000),
+      updatedAt:                new Date(),
+    });
 
     return res.status(200).json({
       success: true,
-      message: "Password reset successful! Please log in with your new password. 🔐",
+      message: "Code verified.",
+      data: { resetToken },
+    });
+  } catch (err) {
+    console.error("Verify OTP error:", err);
+    return res.status(500).json({ success: false, message: "Failed to verify code." });
+  }
+};
+
+// ─── RESET PASSWORD ───────────────────────────────────────────────────────
+exports.resetPassword = async (req, res) => {
+  try {
+    const db = getDb();
+    const { email, resetToken, newPassword } = req.body;
+
+    if (!email || !resetToken || !newPassword) {
+      return res.status(400).json({ success: false, message: "All fields are required." });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({ success: false, message: "Password must be at least 6 characters." });
+    }
+
+    const snap = await db.collection("users")
+      .where("email", "==", email.toLowerCase().trim())
+      .limit(1).get();
+
+    if (snap.empty) {
+      return res.status(400).json({ success: false, message: "Invalid request." });
+    }
+
+    const uid  = snap.docs[0].id;
+    const user = snap.docs[0].data();
+
+    const crypto = require("crypto");
+    const tokenHash = crypto.createHash("sha256").update(resetToken).digest("hex");
+
+    if (user.passwordResetToken !== tokenHash) {
+      return res.status(400).json({ success: false, message: "Invalid or expired reset token." });
+    }
+
+    const expiry = user.passwordResetTokenExpiry?._seconds
+      ? new Date(user.passwordResetTokenExpiry._seconds * 1000)
+      : new Date(user.passwordResetTokenExpiry);
+
+    if (new Date() > expiry) {
+      return res.status(400).json({ success: false, message: "Reset session expired. Please start again." });
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+
+    await db.collection("users").doc(uid).update({
+      passwordHash,
+      passwordResetToken:       null,
+      passwordResetTokenExpiry: null,
+      updatedAt:                new Date(),
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Password reset successfully. You can now log in.",
     });
   } catch (err) {
     console.error("Reset password error:", err);
-    return res.status(500).json({ success: false, message: "Password reset failed." });
+    return res.status(500).json({ success: false, message: "Failed to reset password." });
   }
 };
 
@@ -555,210 +615,7 @@ exports.toggleTwoFA = async (req, res) => {
     return res.status(500).json({ success: false, message: "Failed to update 2FA setting." });
   }
 };
-//forgot pasword
-const crypto = require("crypto");
-const nodemailer = require("nodemailer");
-
-// Email transporter setup
-const transporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS, // Gmail App Password
-  },
-});
-
-// ─── FORGOT PASSWORD — Send OTP ───────────────────────────────────────────
-exports.forgotPassword = async (req, res) => {
-  try {
-    const db = getDb();
-    const { email } = req.body;
-
-    if (!email) {
-      return res.status(400).json({ success: false, message: "Email is required." });
-    }
-
-    // Check if user exists
-    const snap = await db.collection("users")
-      .where("email", "==", email.toLowerCase().trim())
-      .limit(1).get();
-
-    if (snap.empty) {
-      // Don't reveal if email exists — security best practice
-      return res.status(200).json({ success: true, message: "If this email is registered, you will receive a reset code." });
-    }
-
-    const uid  = snap.docs[0].id;
-    const user = snap.docs[0].data();
-
-    // Generate 6-digit OTP
-    const otp     = Math.floor(100000 + Math.random() * 900000).toString();
-    const otpHash = crypto.createHash("sha256").update(otp).digest("hex");
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
-
-    // Save OTP to Firestore
-    await db.collection("users").doc(uid).update({
-      passwordResetOtp:       otpHash,
-      passwordResetOtpExpiry: expiresAt,
-      updatedAt:              new Date(),
-    });
-
-    // Send email
-    await transporter.sendMail({
-      from:    `"PromoEarn" <${process.env.EMAIL_USER}>`,
-      to:      email,
-      subject: "PromoEarn — Password Reset Code",
-      html: `
-        <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;padding:32px;background:#F8FAFF;border-radius:16px;">
-          <div style="text-align:center;margin-bottom:24px;">
-            <div style="background:#1A56DB;color:white;font-size:22px;font-weight:900;width:56px;height:56px;border-radius:14px;display:inline-flex;align-items:center;justify-content:center;letter-spacing:1px;">PE</div>
-            <h2 style="color:#0F172A;margin-top:16px;">Reset Your Password</h2>
-          </div>
-          <p style="color:#64748B;font-size:15px;">Hi ${user.firstName || "there"},</p>
-          <p style="color:#64748B;font-size:15px;">Use the code below to reset your PromoEarn password. This code expires in <strong>15 minutes</strong>.</p>
-          <div style="background:white;border:2px solid #E2E8F0;border-radius:16px;padding:24px;text-align:center;margin:24px 0;">
-            <div style="font-size:42px;font-weight:900;letter-spacing:12px;color:#1A56DB;">${otp}</div>
-          </div>
-          <p style="color:#94A3B8;font-size:13px;text-align:center;">If you didn't request this, you can safely ignore this email.</p>
-          <hr style="border:none;border-top:1px solid #E2E8F0;margin:24px 0;"/>
-          <p style="color:#CBD5E1;font-size:12px;text-align:center;">© 2026 PromoEarn. All rights reserved.</p>
-        </div>
-      `,
-    });
-
-    return res.status(200).json({
-      success: true,
-      message: "If this email is registered, you will receive a reset code.",
-    });
-  } catch (err) {
-    console.error("Forgot password error:", err);
-    return res.status(500).json({ success: false, message: "Failed to send reset code. Please try again." });
-  }
-};
-
-// ─── VERIFY OTP ───────────────────────────────────────────────────────────
-exports.verifyResetOtp = async (req, res) => {
-  try {
-    const db = getDb();
-    const { email, otp } = req.body;
-
-    if (!email || !otp) {
-      return res.status(400).json({ success: false, message: "Email and OTP are required." });
-    }
-
-    const snap = await db.collection("users")
-      .where("email", "==", email.toLowerCase().trim())
-      .limit(1).get();
-
-    if (snap.empty) {
-      return res.status(400).json({ success: false, message: "Invalid code." });
-    }
-
-    const uid  = snap.docs[0].id;
-    const user = snap.docs[0].data();
-
-    // Check OTP
-    const otpHash = crypto.createHash("sha256").update(otp).digest("hex");
-
-    if (user.passwordResetOtp !== otpHash) {
-      return res.status(400).json({ success: false, message: "Invalid reset code." });
-    }
-
-    // Check expiry
-    const expiry = user.passwordResetOtpExpiry?._seconds
-      ? new Date(user.passwordResetOtpExpiry._seconds * 1000)
-      : new Date(user.passwordResetOtpExpiry);
-
-    if (new Date() > expiry) {
-      return res.status(400).json({ success: false, message: "Reset code has expired. Please request a new one." });
-    }
-
-    // Generate a short-lived reset token
-    const resetToken = crypto.randomBytes(32).toString("hex");
-    const tokenHash  = crypto.createHash("sha256").update(resetToken).digest("hex");
-
-    await db.collection("users").doc(uid).update({
-      passwordResetToken:       tokenHash,
-      passwordResetTokenExpiry: new Date(Date.now() + 10 * 60 * 1000), // 10 min
-      passwordResetOtp:         null,
-      passwordResetOtpExpiry:   null,
-      updatedAt:                new Date(),
-    });
-
-    return res.status(200).json({
-      success: true,
-      message: "Code verified.",
-      data: { resetToken },
-    });
-  } catch (err) {
-    console.error("Verify OTP error:", err);
-    return res.status(500).json({ success: false, message: "Failed to verify code." });
-  }
-};
-
-// ─── RESET PASSWORD ───────────────────────────────────────────────────────
-exports.resetPassword = async (req, res) => {
-  try {
-    const db = getDb();
-    const { email, resetToken, newPassword } = req.body;
-
-    if (!email || !resetToken || !newPassword) {
-      return res.status(400).json({ success: false, message: "All fields are required." });
-    }
-
-    if (newPassword.length < 6) {
-      return res.status(400).json({ success: false, message: "Password must be at least 6 characters." });
-    }
-
-    const snap = await db.collection("users")
-      .where("email", "==", email.toLowerCase().trim())
-      .limit(1).get();
-
-    if (snap.empty) {
-      return res.status(400).json({ success: false, message: "Invalid request." });
-    }
-
-    const uid  = snap.docs[0].id;
-    const user = snap.docs[0].data();
-
-    // Verify reset token
-    const tokenHash = crypto.createHash("sha256").update(resetToken).digest("hex");
-
-    if (user.passwordResetToken !== tokenHash) {
-      return res.status(400).json({ success: false, message: "Invalid or expired reset token." });
-    }
-
-    // Check token expiry
-    const expiry = user.passwordResetTokenExpiry?._seconds
-      ? new Date(user.passwordResetTokenExpiry._seconds * 1000)
-      : new Date(user.passwordResetTokenExpiry);
-
-    if (new Date() > expiry) {
-      return res.status(400).json({ success: false, message: "Reset session expired. Please start again." });
-    }
-
-    // Hash new password
-    const passwordHash = await bcrypt.hash(newPassword, 12);
-
-    await db.collection("users").doc(uid).update({
-      passwordHash,
-      passwordResetToken:       null,
-      passwordResetTokenExpiry: null,
-      updatedAt:                new Date(),
-    });
-
-    return res.status(200).json({
-      success: true,
-      message: "Password reset successfully. You can now log in.",
-    });
-  } catch (err) {
-    console.error("Reset password error:", err);
-    return res.status(500).json({ success: false, message: "Failed to reset password." });
-  }
-};
-
-
-
+hafafaffafagggggggggggggggggggggggggggggggggggggggggggggggggggggggg
 
 ///
 exports.googleLogin = async (req, res) => {

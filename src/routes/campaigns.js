@@ -39,6 +39,12 @@ router.post("/submit", verifyToken, async (req, res) => {
     if (!brandName || !taskType || !slots || !pageLink || !contactEmail) {
       return res.status(400).json({ success: false, message: "Missing required fields." });
     }
+    if (parseInt(slots) < 100) {
+      return res.status(400).json({ success: false, message: "Minimum number of slots is 100." });
+    }
+    if (targetCount && parseInt(targetCount) < 100) {
+      return res.status(400).json({ success: false, message: "Minimum target count is 100." });
+    }
 
     const campaignRef = db.collection("campaigns").doc();
     await campaignRef.set({

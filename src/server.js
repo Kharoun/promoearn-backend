@@ -102,6 +102,17 @@ app.use((err, req, res, next) => {
   });
 });
 
+//self ping
+
+// Keep Render alive — ping self every 14 minutes
+if (process.env.NODE_ENV === "production") {
+  setInterval(() => {
+    fetch("https://promoearn-backend.onrender.com/health")
+      .then(() => console.log("Keep-alive ping sent"))
+      .catch(() => {});
+  }, 14 * 60 * 1000);
+}
+
 // ─── Start Server ─────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
