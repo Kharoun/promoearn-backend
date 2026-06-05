@@ -278,7 +278,10 @@ exports.login = async (req, res) => {
     }
 
     const db = getDb();
-    await db.collection("users").doc(user.uid).update({ lastLoginAt: new Date() });
+    await db.collection("users").doc(user.uid).update({
+      lastLoginAt:           new Date(),
+      inactivityWarningSent: false,
+    });
 
     const tokens = buildAuthTokens(user);
 

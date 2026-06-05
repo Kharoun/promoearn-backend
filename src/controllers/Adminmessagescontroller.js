@@ -32,9 +32,10 @@ exports.broadcastMessage = async (req, res) => {
             .replace(/{lastName}/g,  user.lastName  || "")
             .replace(/{username}/g,  user.username  || "");
  
-            await resend.emails.send({ from: "PromoEarn <onboarding@resend.dev>",
-             to, 
-             subject, 
+            await resend.emails.send({ 
+              from: "PromoEarn <noreply@promoearn.com>",
+              to: user.email,
+              subject,
             html: `
               <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px">
                 <div style="background:#1A56DB;padding:20px;border-radius:12px 12px 0 0;text-align:center">
@@ -112,7 +113,10 @@ exports.sendSingleMessage = async (req, res) => {
       .replace(/{lastName}/g,  user?.lastName  || "")
       .replace(/{username}/g,  user?.username  || "");
  
-      await resend.emails.send({ from: "PromoEarn <onboarding@resend.dev>", to, subject,
+      await resend.emails.send({ 
+        from: "PromoEarn <noreply@promoearn.com>",
+        to: recipientEmail,
+        subject,
       html: `
         <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px">
           <div style="background:#1A56DB;padding:20px;border-radius:12px 12px 0 0;text-align:center">

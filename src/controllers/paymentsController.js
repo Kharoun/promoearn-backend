@@ -201,7 +201,7 @@ exports.createCheckout = async (req, res) => {
         subaccounts: [
           {
             subaccount: "ACCT_w3z0tqg2smqk1h9", // PROMO EARN DIGITAL HUB - Sterling Bank
-            share: 45,
+            share: 55,
           },
           {
             subaccount: "ACCT_kauokc340c1dbv7", // EMMANUEL - OPay
