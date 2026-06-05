@@ -11,9 +11,9 @@ cron.schedule('0 0 * * *', async () => {
 
 async function checkInactiveUsers() {
   try {
-    const db = getDb();
+    const db  = getDb();
     const snap = await db.collection('users').get();
-    const now = Date.now();
+    const now  = Date.now();
 
     for (const doc of snap.docs) {
       const user = doc.data();
@@ -29,12 +29,9 @@ async function checkInactiveUsers() {
 
       const daysSince = Math.floor((now - lastLogin) / (1000 * 60 * 60 * 24));
 
-      if (daysSince === 5 && !user.inactivityWarningSent) {
-        await sendWarningEmail(db, user, uid);
-      }
-
-      if (daysSince >= 7) {
-        await banUser(db, user, uid);
+      // At 5 days: warn + ban
+      if (daysSince >= 5 && !user.bannedReason) {
+        await banAndNotifyUser(db, user, uid);
       }
     }
 
@@ -44,119 +41,36 @@ async function checkInactiveUsers() {
   }
 }
 
-async function sendWarningEmail(db, user, uid) {
+async function banAndNotifyUser(db, user, uid) {
   const email     = user.email;
   const firstName = user.firstName || 'User';
   if (!email) return;
 
-  const subject = '⚠️ Action Required: Your PromoEarn account is at risk of suspension';
-  const html = `
-    <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px">
-      <div style="background:#1A56DB;padding:20px;border-radius:12px 12px 0 0;text-align:center">
-        <h2 style="color:#fff;margin:0">PromoEarn</h2>
-      </div>
-      <div style="background:#fff;padding:28px;border:1px solid #E2E8F0;border-top:none;border-radius:0 0 12px 12px">
-        <p style="font-size:15px;color:#0F172A">Hi <strong>${firstName}</strong>,</p>
-        <p style="font-size:15px;line-height:1.7;color:#0F172A">
-          We noticed you haven't logged into your PromoEarn account in the last 5–6 days.
-        </p>
-        <p style="font-size:15px;line-height:1.7;color:#0F172A">
-          As part of our account activity policy, accounts inactive for <strong>7 consecutive days</strong> 
-          are automatically suspended to protect platform integrity.
-        </p>
-        <div style="background:#FEF3C7;border-left:4px solid #F59E0B;padding:14px;border-radius:0 8px 8px 0;margin:20px 0">
-          <p style="margin:0;color:#92400E;font-weight:600;">
-            📅 Your account will be suspended in less than 24–48 hours if no action is taken.
-          </p>
-        </div>
-        <a href="https://promoearn.app/login" 
-           style="display:inline-block;background:#1A56DB;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:600;margin:10px 0">
-          👉 Log In Now to Stay Active
-        </a>
-        <p style="font-size:13px;color:#64748B;margin-top:20px">
-          💳 If suspended, reactivate for a one-time fee of $1 (₦1,500).
-        </p>
-        <hr style="border:none;border-top:1px solid #E2E8F0;margin:24px 0"/>
-        <p style="font-size:12px;color:#94A3B8;text-align:center">
-          © ${new Date().getFullYear()} PromoEarn. All rights reserved.
-        </p>
-      </div>
-    </div>
-  `;
+  // Prevent duplicate bans
+  if (user.bannedReason === 'inactivity_5days') return;
+
+  const crypto    = require('crypto');
+  const token     = crypto.randomBytes(32).toString('hex');
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  const expiry    = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+
+  const reactivationLink = `https://promoearnapp.com/reactivate.html?token=${token}&email=${encodeURIComponent(email)}`;
+
+  const subject = '🚫 Your PromoEarn account has been suspended due to inactivity';
+  const html = buildBanEmail(firstName, reactivationLink);
 
   try {
-    await resend.emails.send({
-      from:    'PromoEarn <noreply@promoearnapp.com>',
-      to:      email,
-      subject,
-      html,
-    });
-
+    // Ban first
     await db.collection('users').doc(uid).update({
-      inactivityWarningSent: true,
+      isBanned:                true,
+      bannedAt:                new Date(),
+      bannedReason:            'inactivity_5days',
+      inactivityWarningSent:   true,
+      reactivationToken:       tokenHash,
+      reactivationTokenExpiry: expiry,
     });
 
-    await db.collection('adminMessages').add({
-      type:           'single',
-      subject,
-      recipientEmail: email,
-      recipientId:    uid,
-      sentBy:         'system',
-      sentAt:         new Date(),
-      trigger:        'inactivity_warning',
-    });
-
-    console.log(`📧 Warning sent to ${email}`);
-  } catch (err) {
-    console.error(`Failed warning email to ${email}:`, err);
-  }
-}
-
-async function banUser(db, user, uid) {
-  const email     = user.email;
-  const firstName = user.firstName || 'User';
-  if (!email) return;
-
-  const subject = '🚫 Your PromoEarn account has been suspended';
-  const html = `
-    <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px">
-      <div style="background:#DC2626;padding:20px;border-radius:12px 12px 0 0;text-align:center">
-        <h2 style="color:#fff;margin:0">PromoEarn</h2>
-      </div>
-      <div style="background:#fff;padding:28px;border:1px solid #E2E8F0;border-top:none;border-radius:0 0 12px 12px">
-        <p style="font-size:15px;color:#0F172A">Hi <strong>${firstName}</strong>,</p>
-        <p style="font-size:15px;line-height:1.7;color:#0F172A">
-          Your PromoEarn account has been <strong>automatically suspended</strong> due to 7 days of inactivity.
-        </p>
-        <div style="background:#FEF2F2;border-left:4px solid #EF4444;padding:14px;border-radius:0 8px 8px 0;margin:20px 0">
-          <p style="margin:0;color:#991B1B;font-weight:600;">
-            🚫 Your account is now suspended.
-          </p>
-        </div>
-        <p style="font-size:15px;line-height:1.7;color:#0F172A">
-          To reactivate your account, pay a one-time fee of <strong>$1 (₦1,500)</strong> 
-          and contact our support team.
-        </p>
-        <a href="mailto:contact.promoearn@gmail.com"
-           style="display:inline-block;background:#1A56DB;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:600;margin:10px 0">
-          📧 Contact Support
-        </a>
-        <hr style="border:none;border-top:1px solid #E2E8F0;margin:24px 0"/>
-        <p style="font-size:12px;color:#94A3B8;text-align:center">
-          © ${new Date().getFullYear()} PromoEarn. All rights reserved.
-        </p>
-      </div>
-    </div>
-  `;
-
-  try {
-    await db.collection('users').doc(uid).update({
-      isBanned:              true,
-      bannedAt:              new Date(),
-      bannedReason:          'inactivity_7days',
-      inactivityWarningSent: false,
-    });
-
+    // Then email
     await resend.emails.send({
       from:    'PromoEarn <noreply@promoearnapp.com>',
       to:      email,
@@ -180,4 +94,56 @@ async function banUser(db, user, uid) {
   }
 }
 
-module.exports = { checkInactiveUsers };
+function buildBanEmail(firstName, reactivationLink) {
+  return `
+    <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px">
+      <div style="background:#DC2626;padding:20px;border-radius:12px 12px 0 0;text-align:center">
+        <h2 style="color:#fff;margin:0">PromoEarn</h2>
+      </div>
+      <div style="background:#fff;padding:28px;border:1px solid #E2E8F0;border-top:none;border-radius:0 0 12px 12px">
+        <p style="font-size:15px;color:#0F172A">Hi <strong>${firstName}</strong>,</p>
+        <p style="font-size:15px;line-height:1.7;color:#0F172A">
+          Your PromoEarn account has been <strong>automatically suspended</strong> due to 5 days of inactivity.
+        </p>
+        <div style="background:#FEF2F2;border-left:4px solid #EF4444;padding:14px;border-radius:0 8px 8px 0;margin:20px 0">
+          <p style="margin:0;color:#991B1B;font-weight:600;">🚫 Your account is now suspended.</p>
+        </div>
+
+        <h3 style="color:#0F172A;margin-top:24px;font-size:16px;">How to Reactivate Your Account</h3>
+        <p style="font-size:15px;line-height:1.7;color:#0F172A">
+          Click the button below to pay a one-time reactivation fee of 
+          <strong>₦1,000 (~$0.67)</strong>. Your account will be instantly restored after payment.
+        </p>
+
+        <div style="background:#F0FDF4;border:1px solid #86EFAC;border-radius:10px;padding:16px;margin:20px 0">
+          <p style="margin:0 0 8px;font-weight:700;color:#166534;">After payment:</p>
+          <ul style="margin:0;padding-left:20px;color:#166534;line-height:1.8;font-size:14px;">
+            <li>Your account is instantly unbanned ✅</li>
+            <li>All your earnings and progress are restored 💰</li>
+            <li>You can start completing tasks again immediately 🎯</li>
+          </ul>
+        </div>
+
+        <div style="text-align:center;margin:28px 0;">
+          <a href="${reactivationLink}"
+             style="display:inline-block;background:#16A34A;color:#fff;padding:16px 36px;border-radius:10px;text-decoration:none;font-weight:700;font-size:16px;">
+            👉 Reactivate My Account — ₦1,000
+          </a>
+        </div>
+
+        <p style="font-size:13px;color:#64748B;text-align:center;">
+          This link expires in <strong>7 days</strong>.<br/>
+          Questions? Contact us at 
+          <a href="mailto:contact.promoearn@gmail.com" style="color:#1A56DB;">contact.promoearn@gmail.com</a>
+        </p>
+
+        <hr style="border:none;border-top:1px solid #E2E8F0;margin:24px 0"/>
+        <p style="font-size:12px;color:#94A3B8;text-align:center">
+          © ${new Date().getFullYear()} PromoEarn. All rights reserved.
+        </p>
+      </div>
+    </div>
+  `;
+}
+
+module.exports = { checkInactiveUsers, banAndNotifyUser, buildBanEmail };

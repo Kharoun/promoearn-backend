@@ -7,9 +7,17 @@ const {
   paystackWebhook,
   requestWithdrawal,
   getTransactions,
-  getBanks,        // ← add
-  verifyAccount,   // ← add
-} = require("../controllers/paymentsController"); 
+  getBanks,
+  verifyAccount,
+  validateReactivationToken,   // ← add
+  createReactivationCheckout,  // ← add
+  verifyReactivation,          // ← add
+} = require('../controllers/paymentsController');
+
+// ── Public routes (no auth — user is banned so they have no token) ──
+router.get('/reactivate/validate',   validateReactivationToken);
+router.post('/reactivate/checkout',  createReactivationCheckout);
+router.post('/reactivate/verify',    verifyReactivation);
 
 router.get("/banks",          protect, getBanks);
 router.post("/verify-account", protect, verifyAccount);

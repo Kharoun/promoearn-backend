@@ -2,7 +2,8 @@ const { createNotification } = require("./notificationsController");
 const { getDb } = require("../config/firebase");
 const { v4: uuidv4 } = require("uuid");
 const https = require("https");
-
+const { Resend } = require('resend');
+const resend = new Resend(process.env.RESEND_API_KEY);
 // ─── Constants ────────────────────────────────────────────────────────────────
 const NGN_RATE         = 1500;
 const REGISTRATION_FEE = 4500 / NGN_RATE;  // = $3.00
@@ -495,5 +496,219 @@ exports.paystackWebhook = async (req, res) => {
 
   } catch (err) {
     console.error("Webhook error:", err);
+  }
+};
+// ─── VALIDATE REACTIVATION TOKEN ─────────────────────────────────────────────
+exports.validateReactivationToken = async (req, res) => {
+  try {
+    const { token, email } = req.query;
+    const db     = getDb();
+    const crypto = require('crypto');
+
+    if (!token || !email) {
+      return res.status(400).json({ success: false, message: 'Invalid link.' });
+    }
+
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+
+    const snap = await db.collection('users')
+      .where('email', '==', email.toLowerCase())
+      .limit(1).get();
+
+    if (snap.empty) {
+      return res.status(404).json({ success: false, message: 'Account not found.' });
+    }
+
+    const user = snap.docs[0].data();
+    const uid  = snap.docs[0].id;
+
+    if (user.reactivationToken !== tokenHash) {
+      return res.status(400).json({ success: false, message: 'Invalid or already used link.' });
+    }
+
+    const expiry = user.reactivationTokenExpiry?._seconds
+      ? new Date(user.reactivationTokenExpiry._seconds * 1000)
+      : new Date(user.reactivationTokenExpiry);
+
+    if (new Date() > expiry) {
+      return res.status(400).json({ success: false, message: 'This link has expired. Please contact support.' });
+    }
+
+    if (!user.isBanned) {
+      return res.status(400).json({ success: false, message: 'Account is already active.' });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: { uid, email: user.email, firstName: user.firstName },
+    });
+  } catch (err) {
+    console.error('Validate reactivation token error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to validate link.' });
+  }
+};
+
+// ─── INITIALIZE REACTIVATION PAYMENT ─────────────────────────────────────────
+exports.createReactivationCheckout = async (req, res) => {
+  try {
+    const { token, email } = req.body;
+    const db     = getDb();
+    const crypto = require('crypto');
+
+    if (!token || !email) {
+      return res.status(400).json({ success: false, message: 'Invalid request.' });
+    }
+
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+
+    const snap = await db.collection('users')
+      .where('email', '==', email.toLowerCase())
+      .limit(1).get();
+
+    if (snap.empty) {
+      return res.status(404).json({ success: false, message: 'Account not found.' });
+    }
+
+    const user = snap.docs[0].data();
+    const uid  = snap.docs[0].id;
+
+    if (user.reactivationToken !== tokenHash) {
+      return res.status(400).json({ success: false, message: 'Invalid or expired link.' });
+    }
+
+    if (!user.isBanned) {
+      return res.status(400).json({ success: false, message: 'Account is already active.' });
+    }
+
+    const amountKobo = 1000 * 100; // ₦1,000
+
+    const response = await paystackRequest('POST', '/transaction/initialize', {
+      email:     user.email,
+      amount:    amountKobo,
+      currency:  'NGN',
+      reference: `PE-REACTIVATE-${uid}-${Date.now()}`,
+      metadata: {
+        userId: uid,
+        email:  user.email,
+        token,
+        type:   'reactivation',
+        custom_fields: [
+          { display_name: 'Product', variable_name: 'product', value: 'Account Reactivation' },
+          { display_name: 'Amount',  variable_name: 'amount',  value: '₦1,000' },
+        ],
+      },
+      callback_url: `https://promoearnapp.com/reactivate.html?token=${token}&email=${encodeURIComponent(email)}&status=paid`,
+    });
+
+    if (!response.status) {
+      return res.status(400).json({ success: false, message: response.message || 'Failed to initialize payment.' });
+    }
+
+    return res.status(200).json({
+      success:   true,
+      url:       response.data.authorization_url,
+      reference: response.data.reference,
+    });
+  } catch (err) {
+    console.error('Reactivation checkout error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to create reactivation payment.' });
+  }
+};
+
+// ─── VERIFY REACTIVATION PAYMENT ─────────────────────────────────────────────
+exports.verifyReactivation = async (req, res) => {
+  try {
+    const { reference } = req.body;
+    const db = getDb();
+
+    const response = await paystackRequest('GET', `/transaction/verify/${encodeURIComponent(reference)}`);
+
+    if (!response.status || response.data.status !== 'success') {
+      return res.status(400).json({ success: false, message: 'Payment not completed.' });
+    }
+
+    const { userId, email, token, type } = response.data.metadata;
+
+    if (!userId || type !== 'reactivation') {
+      return res.status(400).json({ success: false, message: 'Invalid payment metadata.' });
+    }
+
+    const userDoc = await db.collection('users').doc(userId).get();
+    if (!userDoc.exists) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
+
+    const user = userDoc.data();
+
+    // Unban and clear token
+    await db.collection('users').doc(userId).update({
+      isBanned:                false,
+      bannedReason:            null,
+      bannedAt:                null,
+      reactivatedAt:           new Date(),
+      reactivationToken:       null,
+      reactivationTokenExpiry: null,
+      inactivityWarningSent:   false,
+      lastLoginAt:             new Date(),
+      updatedAt:               new Date(),
+    });
+
+    // Log transaction
+    await db.collection('transactions').add({
+      userId,
+      type:        'reactivation',
+      description: 'Account reactivation fee',
+      amount:      -0.67,
+      status:      'completed',
+      reference,
+      createdAt:   new Date(),
+    });
+
+    // Send confirmation email
+    await resend.emails.send({
+      from:    'PromoEarn <noreply@promoearnapp.com>',
+      to:      user.email,
+      subject: '✅ Your PromoEarn account has been reactivated!',
+      html: `
+        <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px">
+          <div style="background:#16A34A;padding:20px;border-radius:12px 12px 0 0;text-align:center">
+            <h2 style="color:#fff;margin:0">PromoEarn</h2>
+          </div>
+          <div style="background:#fff;padding:28px;border:1px solid #E2E8F0;border-top:none;border-radius:0 0 12px 12px">
+            <p style="font-size:15px;color:#0F172A">Hi <strong>${user.firstName || 'User'}</strong>,</p>
+            <p style="font-size:15px;line-height:1.7;color:#0F172A">
+              Your PromoEarn account has been successfully reactivated! 🎉
+            </p>
+            <div style="background:#F0FDF4;border-left:4px solid #16A34A;padding:14px;border-radius:0 8px 8px 0;margin:20px 0">
+              <p style="margin:0;color:#166534;font-weight:600;">✅ Your account is now fully active again.</p>
+            </div>
+            <div style="text-align:center;margin:24px 0;">
+              <a href="https://app.promoearnapp.com/"
+                 style="display:inline-block;background:#1A56DB;color:#fff;padding:14px 32px;border-radius:10px;text-decoration:none;font-weight:700;">
+                👉 Log In Now
+              </a>
+            </div>
+            <hr style="border:none;border-top:1px solid #E2E8F0;margin:24px 0"/>
+            <p style="font-size:12px;color:#94A3B8;text-align:center">
+              © ${new Date().getFullYear()} PromoEarn. All rights reserved.
+            </p>
+          </div>
+        </div>
+      `,
+    });
+
+    await createNotification(userId, {
+      title: '✅ Account Reactivated!',
+      body:  'Your account has been successfully reactivated. Welcome back!',
+      type:  'paymentAlerts',
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Account reactivated successfully! You can now log in.',
+    });
+  } catch (err) {
+    console.error('Verify reactivation error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to verify reactivation payment.' });
   }
 };
