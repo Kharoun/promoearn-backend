@@ -86,7 +86,7 @@ async function sendWarningEmail(db, user, uid) {
 
   try {
     await resend.emails.send({
-      from:    'PromoEarn <noreply@promoearn.com>',
+      from:    'PromoEarn <noreply@promoearnapp.com>',
       to:      email,
       subject,
       html,
@@ -137,7 +137,7 @@ async function banUser(db, user, uid) {
           To reactivate your account, pay a one-time fee of <strong>$1 (₦1,500)</strong> 
           and contact our support team.
         </p>
-        <a href="mailto:support@promoearn.com"
+        <a href="mailto:contact.promoearn@gmail.com"
            style="display:inline-block;background:#1A56DB;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:600;margin:10px 0">
           📧 Contact Support
         </a>
@@ -158,7 +158,7 @@ async function banUser(db, user, uid) {
     });
 
     await resend.emails.send({
-      from:    'PromoEarn <noreply@promoearn.com>',
+      from:    'PromoEarn <noreply@promoearnapp.com>',
       to:      email,
       subject,
       html,

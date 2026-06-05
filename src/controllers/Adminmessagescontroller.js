@@ -27,32 +27,39 @@ exports.broadcastMessage = async (req, res) => {
       const batch = users.slice(i, i + BATCH_SIZE);
       await Promise.allSettled(
         batch.map(async (user) => {
+          if (!user.email) return;
+        
           const personalBody = body
             .replace(/{firstName}/g, user.firstName || "User")
             .replace(/{lastName}/g,  user.lastName  || "")
             .replace(/{username}/g,  user.username  || "");
- 
-            await resend.emails.send({ 
-              from: "PromoEarn <noreply@promoearn.com>",
-              to: user.email,
+        
+          try {
+            await resend.emails.send({
+              from:    "PromoEarn <noreply@promoearnapp.com>",
+              to:      user.email,
               subject,
-            html: `
-              <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px">
-                <div style="background:#1A56DB;padding:20px;border-radius:12px 12px 0 0;text-align:center">
-                  <h2 style="color:#fff;margin:0">PromoEarn</h2>
+              html: `
+                <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px">
+                  <div style="background:#1A56DB;padding:20px;border-radius:12px 12px 0 0;text-align:center">
+                    <h2 style="color:#fff;margin:0">PromoEarn</h2>
+                  </div>
+                  <div style="background:#fff;padding:28px;border:1px solid #E2E8F0;border-top:none;border-radius:0 0 12px 12px">
+                    <p style="font-size:15px;line-height:1.7;color:#0F172A;white-space:pre-line">${personalBody}</p>
+                    <hr style="border:none;border-top:1px solid #E2E8F0;margin:24px 0"/>
+                    <p style="font-size:12px;color:#94A3B8;text-align:center">
+                      You received this email because you are a PromoEarn member.<br/>
+                      © ${new Date().getFullYear()} PromoEarn. All rights reserved.
+                    </p>
+                  </div>
                 </div>
-                <div style="background:#fff;padding:28px;border:1px solid #E2E8F0;border-top:none;border-radius:0 0 12px 12px">
-                  <p style="font-size:15px;line-height:1.7;color:#0F172A;white-space:pre-line">${personalBody}</p>
-                  <hr style="border:none;border-top:1px solid #E2E8F0;margin:24px 0"/>
-                  <p style="font-size:12px;color:#94A3B8;text-align:center">
-                    You received this email because you are a PromoEarn member.<br/>
-                    © ${new Date().getFullYear()} PromoEarn. All rights reserved.
-                  </p>
-                </div>
-              </div>
-            `,
-          });
-          successCount++;
+              `,
+            });
+            console.log(`✅ Sent to ${user.email}`);
+            successCount++;
+          } catch (emailErr) {
+            console.error(`❌ Failed to send to ${user.email}:`, emailErr.message);
+          }
         })
       );
       // Small delay between batches to respect rate limits
