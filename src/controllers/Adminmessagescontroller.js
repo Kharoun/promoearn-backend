@@ -114,7 +114,7 @@ exports.sendSingleMessage = async (req, res) => {
       .replace(/{username}/g,  user?.username  || "");
  
       await resend.emails.send({ 
-        from: "PromoEarn <noreply@promoearn.com>",
+        from: "PromoEarn <noreply@promoearnapp.com>",
         to: recipientEmail,
         subject,
       html: `
