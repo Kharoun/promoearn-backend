@@ -10,7 +10,7 @@ const authRoutes = require("./routes/authRoutes");
 
 // ─── Initialize Firebase ──────────────────────────────────────────────────────
 initFirebase();
-require('./src/jobs/inactivityJob'); 
+require('./jobs/inactivityJob'); 
 // ─── App Setup ────────────────────────────────────────────────────────────────
 const app = express();
 
