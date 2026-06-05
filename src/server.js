@@ -19,13 +19,35 @@ app.set('trust proxy', 1);
 // Security headers
 // CORS — must be before helmet
 const allowedOrigins = process.env.CORS_ORIGINS
-  ? process.env.CORS_ORIGINS.split(",")
+  ? process.env.CORS_ORIGINS.split(",").map(o => o.trim())
   : [
       "http://localhost:5173",
       "http://localhost:8081",
       "https://promoearnapp.com",
       "https://app.promoearnapp.com",
     ];
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Allow no-origin requests (mobile apps, Postman, curl)
+      if (!origin) return callback(null, true);
+      // Allow Vercel preview URLs
+      if (/^https:\/\/.*promo-earn.*\.vercel\.app$/.test(origin)) return callback(null, true);
+      // Allow matched origins
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      // Log what's being blocked to help debug
+      console.warn("CORS blocked origin:", origin);
+      return callback(null, false); // ← return false instead of throwing an Error
+    },
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true,
+  })
+);
+
+// Handle preflight for all routes
+app.options("*", cors());
 
   app.use(
     cors({
