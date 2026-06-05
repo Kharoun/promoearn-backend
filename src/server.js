@@ -20,7 +20,12 @@ app.set('trust proxy', 1);
 // CORS — must be before helmet
 const allowedOrigins = process.env.CORS_ORIGINS
   ? process.env.CORS_ORIGINS.split(",")
-  : ["http://localhost:5173", "http://localhost:8081"];
+  : [
+      "http://localhost:5173",
+      "http://localhost:8081",
+      "https://promoearnapp.com",
+      "https://app.promoearnapp.com",
+    ];
 
   app.use(
     cors({
