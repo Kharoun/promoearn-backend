@@ -196,20 +196,21 @@ exports.createCheckout = async (req, res) => {
       reference: `PE-${userId}-${Date.now()}`,
 
       // ── Split payment config ──────────────────────────────
-      split: {
-        type: "percentage",
-        bearer_type: "account",
-        subaccounts: [
-          {
-            subaccount: "ACCT_w3z0tqg2smqk1h9", // PROMO EARN DIGITAL HUB - Sterling Bank
-            share: 55,
-          },
-          {
-            subaccount: "ACCT_kauokc340c1dbv7", // EMMANUEL - OPay
-            share: 44,
-          },
-        ],
-      },
+     split: {
+  type: "percentage",
+  bearer_type: "account",
+  bearer_subaccount: "ACCT_w3z0tqg2smqk1h9",
+  subaccounts: [
+    {
+      subaccount: "ACCT_w3z0tqg2smqk1h9",
+      share: 55,
+    },
+    {
+      subaccount: "ACCT_kauokc340c1dbv7",
+      share: 45,
+    },
+  ],
+},
       // ─────────────────────────────────────────────────────
 
       callback_url: `${process.env.CLIENT_URL}/payment-success`,
