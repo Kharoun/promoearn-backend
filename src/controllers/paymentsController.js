@@ -203,7 +203,7 @@ exports.createCheckout = async (req, res) => {
   subaccounts: [
     {
       subaccount: "ACCT_w3z0tqg2smqk1h9",
-      share: 55,
+      share: 45,
     },
     {
       subaccount: "ACCT_kauokc340c1dbv7",
