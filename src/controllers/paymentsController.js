@@ -11,7 +11,7 @@ const WELCOME_BONUS    = 0;
 const TASK_REWARD      = 0.17;
 const REFERRAL_BONUS   = 1.33;
 const MIN_WITHDRAWAL = 5010 / NGN_RATE;  // = $3.34
-const WITHDRAWAL_FEE = 100 / NGN_RATE;  // ₦100 = ~$0.067
+const WITHDRAWAL_FEE = 200 / NGN_RATE;  // ₦200 = ~$0.133
 const PAYSTACK_SECRET  = process.env.PAYSTACK_SECRET_KEY;
 
 // ─── Helper: call Paystack API ────────────────────────────────────────────────
