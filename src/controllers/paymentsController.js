@@ -713,3 +713,64 @@ exports.verifyReactivation = async (req, res) => {
     return res.status(500).json({ success: false, message: 'Failed to verify reactivation payment.' });
   }
 };
+// POST /api/v1/payments/manual-activation
+exports.manualActivation = async (req, res) => {
+    try {
+      const { userId, email, txRef } = req.body;
+      const db = getDb();
+  
+      if (!userId || !txRef) {
+        return res.status(400).json({ success: false, message: "Missing fields." });
+      }
+  
+      // Save the pending activation request for admin to review
+      await db.collection("pendingActivations").add({
+        userId,
+        email:     email || "",
+        txRef:     txRef.trim(),
+        status:    "pending",
+        createdAt: new Date(),
+      });
+  
+      // Notify admin (optional — you can remove this if you don't have admin notifications)
+      await db.collection("adminNotifications").add({
+        type:      "manual_activation",
+        userId,
+        email,
+        txRef,
+        message:   `New activation request from ${email}. Ref: ${txRef}`,
+        createdAt: new Date(),
+        read:      false,
+      });
+  
+      return res.status(200).json({
+        success: true,
+        message: "Activation request received. Your account will be activated within 1–6 hours.",
+      });
+    } catch (err) {
+      console.error("Manual activation error:", err);
+      return res.status(500).json({ success: false, message: "Server error." });
+    }
+  };
+//   exports.manualActivation = async (req, res) => {
+//     try {
+//       const { userId, email, txRef } = req.body;
+//       const db = getDb();
+//       if (!userId || !txRef) {
+//         return res.status(400).json({ success: false, message: "Missing fields." });
+//       }
+//       await db.collection("pendingActivations").add({
+//         userId, email: email || "", txRef: txRef.trim(),
+//         status: "pending", createdAt: new Date(),
+//       });
+//       await db.collection("adminNotifications").add({
+//         type: "manual_activation", userId, email, txRef,
+//         message: `New activation from ${email}. Ref: ${txRef}`,
+//         createdAt: new Date(), read: false,
+//       });
+//       return res.status(200).json({ success: true, message: "Activation request received." });
+//     } catch (err) {
+//       console.error("Manual activation error:", err);
+//       return res.status(500).json({ success: false, message: "Server error." });
+//     }
+//   };
