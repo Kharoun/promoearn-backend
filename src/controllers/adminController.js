@@ -514,3 +514,56 @@ exports.processReactivation = async (req, res) => {
     return res.status(500).json({ success: false, message: "Server error." });
   }
 };
+// ─── UPDATE CAMPAIGN STATUS ───────────────────────────────────────────────────
+exports.updateCampaignStatus = async (req, res) => {
+  try {
+    const { id }                = req.params;
+    const { status, adminNote } = req.body;
+    const db = getDb();
+
+    const validStatuses = ["approved", "rejected", "live", "completed"];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ success: false, message: `Invalid status. Must be one of: ${validStatuses.join(", ")}` });
+    }
+
+    const campaignDoc = await db.collection("campaigns").doc(id).get();
+    if (!campaignDoc.exists) {
+      return res.status(404).json({ success: false, message: "Campaign not found." });
+    }
+
+    const update = { status, updatedAt: new Date() };
+    if (adminNote !== undefined) update.adminNote  = adminNote;
+    if (status === "live")       update.liveAt      = new Date();
+    if (status === "completed")  update.completedAt = new Date();
+
+    await db.collection("campaigns").doc(id).update(update);
+
+    // Notify the campaign owner
+    const campaign = campaignDoc.data();
+    const ownerId  = campaign.submittedBy;
+    if (ownerId) {
+      const messages = {
+        approved:  { title: "🎉 Campaign Approved!", body: `Your campaign "${campaign.brandName}" has been approved and will go live soon.` },
+        rejected:  { title: "❌ Campaign Rejected",  body: `Your campaign "${campaign.brandName}" was rejected.${adminNote ? ` Reason: ${adminNote}` : ""}` },
+        live:      { title: "🚀 Campaign is Live!",  body: `Your campaign "${campaign.brandName}" is now live and earning for you.` },
+        completed: { title: "✅ Campaign Completed", body: `Your campaign "${campaign.brandName}" has completed its run.` },
+      };
+      const msg = messages[status];
+      if (msg) {
+        await db.collection("notifications").add({
+          userId:    ownerId,
+          title:     msg.title,
+          message:   msg.body,
+          type:      "campaign",
+          read:      false,
+          createdAt: new Date(),
+        });
+      }
+    }
+
+    return res.json({ success: true, message: `Campaign ${status}.` });
+  } catch (err) {
+    console.error("Update campaign status error:", err);
+    return res.status(500).json({ success: false, message: "Server error." });
+  }
+};

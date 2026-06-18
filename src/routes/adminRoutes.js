@@ -36,10 +36,11 @@ router.delete("/tasks/:id", deleteTask);
 router.get("/payments", getPayments);
 router.put("/payments/:id", processPayment);
 
+router.patch("/campaigns/:id/status", authMiddleware, adminController.updateCampaignStatus);
 // Reactivations
 router.get("/reactivations",       getReactivations);
 router.put("/reactivations/:id",   processReactivation);
-      
+
 // Referrals
 router.get("/referrals", getReferrals);
 
