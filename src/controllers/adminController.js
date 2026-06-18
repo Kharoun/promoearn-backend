@@ -334,6 +334,7 @@ exports.getReferrals = async (req, res) => {
   }
 };
 // ─── REACTIVATIONS ────────────────────────────────────────────────────────────
+// ─── REACTIVATIONS ────────────────────────────────────────────────────────────
 const { Resend } = require('resend');
 const { createNotification } = require('./notificationsController');
 
@@ -399,4 +400,32 @@ exports.processReactivation = async (req, res) => {
         to:      r.email,
         subject: '✅ Your PromoEarn account has been reactivated!',
         html: `
-          <div style="font-family:
+          <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px">
+            <div style="background:#16A34A;padding:20px;border-radius:12px 12px 0 0;text-align:center">
+              <h2 style="color:#fff;margin:0">PromoEarn</h2>
+            </div>
+            <div style="background:#fff;padding:28px;border:1px solid #E2E8F0;border-top:none;border-radius:0 0 12px 12px">
+              <p style="font-size:15px;color:#0F172A">Hi <strong>${r.firstName || 'User'}</strong>,</p>
+              <p style="font-size:15px;line-height:1.7;color:#0F172A">Your PromoEarn account has been successfully reactivated! 🎉</p>
+              <div style="background:#F0FDF4;border-left:4px solid #16A34A;padding:14px;border-radius:0 8px 8px 0;margin:20px 0">
+                <p style="margin:0;color:#166534;font-weight:600;">✅ Your account is now fully active again.</p>
+              </div>
+              <div style="text-align:center;margin:24px 0;">
+                <a href="https://app.promoearnapp.com/" style="display:inline-block;background:#1A56DB;color:#fff;padding:14px 32px;border-radius:10px;text-decoration:none;font-weight:700;">👉 Log In Now</a>
+              </div>
+            </div>
+          </div>
+        `,
+      });
+
+      return res.status(200).json({ success: true, message: `Account reactivated for ${r.email}.` });
+
+    } else {
+      await db.collection('reactivations').doc(id).update({ status: 'rejected', updatedAt: new Date() });
+      return res.status(200).json({ success: true, message: 'Reactivation request rejected.' });
+    }
+  } catch (err) {
+    console.error('Process reactivation error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to process reactivation.' });
+  }
+};
