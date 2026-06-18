@@ -1,5 +1,6 @@
 const { getDb } = require("../config/firebase");
-
+const { Resend } = require('resend');
+const { createNotification } = require('./notificationsController');
 const sanitizeUser = (uid, data) => {
   const { passwordHash, ...safe } = data;
   return { uid, ...safe };
@@ -335,8 +336,7 @@ exports.getReferrals = async (req, res) => {
 };
 // ─── REACTIVATIONS ────────────────────────────────────────────────────────────
 // ─── REACTIVATIONS ────────────────────────────────────────────────────────────
-const { Resend } = require('resend');
-const { createNotification } = require('./notificationsController');
+
 
 exports.getReactivations = async (req, res) => {
   try {
@@ -354,78 +354,163 @@ exports.getReactivations = async (req, res) => {
 
 exports.processReactivation = async (req, res) => {
   try {
-    const { id }     = req.params;
-    const { action } = req.body;
-    const db         = getDb();
+    const { id }                      = req.params;
+    const { action, rejectReason }    = req.body;
+    // action = "approve" | "reject"
 
-    const reqDoc = await db.collection('reactivations').doc(id).get();
-    if (!reqDoc.exists) return res.status(404).json({ success: false, message: 'Request not found.' });
+    if (!['approve', 'reject'].includes(action)) {
+      return res.status(400).json({ success: false, message: "Invalid action. Use 'approve' or 'reject'." });
+    }
 
-    const r = reqDoc.data();
-    if (r.status !== 'pending') return res.status(400).json({ success: false, message: 'Already processed.' });
+    const db      = getDb();
+    const docRef  = db.collection('reactivations').doc(id);
+    const docSnap = await docRef.get();
+
+    if (!docSnap.exists) {
+      return res.status(404).json({ success: false, message: "Reactivation request not found." });
+    }
+
+    const reactData = docSnap.data();
+
+    if (reactData.status !== 'pending') {
+      return res.status(400).json({ success: false, message: "This request has already been processed." });
+    }
+
+    const uid = reactData.userId;
+
+    const userDoc = await db.collection('users').doc(uid).get();
+    if (!userDoc.exists) {
+      return res.status(404).json({ success: false, message: "User not found." });
+    }
+
+    const resend = new Resend(process.env.RESEND_API_KEY);
 
     if (action === 'approve') {
-      await db.collection('users').doc(r.userId).update({
+      // 1. Unban user and clear the reactivation token
+      await db.collection('users').doc(uid).update({
         isBanned:                false,
         bannedReason:            null,
         bannedAt:                null,
-        reactivatedAt:           new Date(),
         reactivationToken:       null,
         reactivationTokenExpiry: null,
-        inactivityWarningSent:   false,
-        lastLoginAt:             new Date(),
+        reactivatedAt:           new Date(),
         updatedAt:               new Date(),
       });
 
-      await db.collection('transactions').add({
-        userId:      r.userId,
-        type:        'reactivation',
-        description: 'Account reactivation fee',
-        amount:      -0.67,
-        status:      'completed',
-        createdAt:   new Date(),
+      // 2. Mark the reactivation record as approved
+      await docRef.update({
+        status:     'approved',
+        approvedAt: new Date(),
+        approvedBy: req.user.uid,
       });
 
-      await db.collection('reactivations').doc(id).update({ status: 'approved', updatedAt: new Date() });
-
-      await createNotification(r.userId, {
-        title: '✅ Account Reactivated!',
-        body:  'Your account has been successfully reactivated. Welcome back!',
+      // 3. In-app notification
+      await createNotification(uid, {
+        title: '🎉 Account Reactivated!',
+        body:  'Your transfer has been confirmed. Your account is fully restored — you can now log in and start earning again!',
         type:  'paymentAlerts',
       });
 
-      const resend = new Resend(process.env.RESEND_API_KEY);
+      // 4. Email the user
       await resend.emails.send({
         from:    'PromoEarn <noreply@promoearnapp.com>',
-        to:      r.email,
-        subject: '✅ Your PromoEarn account has been reactivated!',
+        to:      reactData.email,
+        subject: '✅ Your PromoEarn Account Has Been Reactivated',
         html: `
           <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px">
             <div style="background:#16A34A;padding:20px;border-radius:12px 12px 0 0;text-align:center">
               <h2 style="color:#fff;margin:0">PromoEarn</h2>
             </div>
             <div style="background:#fff;padding:28px;border:1px solid #E2E8F0;border-top:none;border-radius:0 0 12px 12px">
-              <p style="font-size:15px;color:#0F172A">Hi <strong>${r.firstName || 'User'}</strong>,</p>
-              <p style="font-size:15px;line-height:1.7;color:#0F172A">Your PromoEarn account has been successfully reactivated! 🎉</p>
+              <p style="font-size:15px;color:#0F172A">Hi <strong>${reactData.firstName || 'there'}</strong>,</p>
+              <p style="font-size:15px;line-height:1.7;color:#0F172A">
+                Great news! We've confirmed your transfer and your PromoEarn account has been <strong>fully reactivated</strong>.
+              </p>
               <div style="background:#F0FDF4;border-left:4px solid #16A34A;padding:14px;border-radius:0 8px 8px 0;margin:20px 0">
-                <p style="margin:0;color:#166534;font-weight:600;">✅ Your account is now fully active again.</p>
+                <p style="margin:0;color:#166534;font-weight:600;">✅ Your account is now active.</p>
               </div>
-              <div style="text-align:center;margin:24px 0;">
-                <a href="https://app.promoearnapp.com/" style="display:inline-block;background:#1A56DB;color:#fff;padding:14px 32px;border-radius:10px;text-decoration:none;font-weight:700;">👉 Log In Now</a>
+              <ul style="color:#0F172A;line-height:2;font-size:14px;">
+                <li>💰 All your earnings and progress have been restored</li>
+                <li>🎯 You can start completing tasks again immediately</li>
+              </ul>
+              <div style="text-align:center;margin:28px 0;">
+                <a href="https://app.promoearnapp.com"
+                   style="display:inline-block;background:#16A34A;color:#fff;padding:16px 36px;border-radius:10px;text-decoration:none;font-weight:700;font-size:16px;">
+                  👉 Log In Now
+                </a>
               </div>
+              <hr style="border:none;border-top:1px solid #E2E8F0;margin:24px 0"/>
+              <p style="font-size:12px;color:#94A3B8;text-align:center">
+                © ${new Date().getFullYear()} PromoEarn. All rights reserved.
+              </p>
             </div>
           </div>
         `,
       });
 
-      return res.status(200).json({ success: true, message: `Account reactivated for ${r.email}.` });
+      return res.json({ success: true, message: "User reactivated and notified by email." });
 
     } else {
-      await db.collection('reactivations').doc(id).update({ status: 'rejected', updatedAt: new Date() });
-      return res.status(200).json({ success: true, message: 'Reactivation request rejected.' });
+      // REJECT
+
+      // 1. Mark the reactivation record as rejected
+      await docRef.update({
+        status:       'rejected',
+        rejectReason: rejectReason || 'Transfer could not be confirmed.',
+        rejectedAt:   new Date(),
+        rejectedBy:   req.user.uid,
+      });
+
+      // 2. In-app notification
+      await createNotification(uid, {
+        title: '⚠️ Reactivation Not Confirmed',
+        body:  rejectReason || 'We could not confirm your transfer. Please contact support for help.',
+        type:  'paymentAlerts',
+      });
+
+      // 3. Email the user
+      await resend.emails.send({
+        from:    'PromoEarn <noreply@promoearnapp.com>',
+        to:      reactData.email,
+        subject: '⚠️ Reactivation Request Not Confirmed',
+        html: `
+          <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px">
+            <div style="background:#DC2626;padding:20px;border-radius:12px 12px 0 0;text-align:center">
+              <h2 style="color:#fff;margin:0">PromoEarn</h2>
+            </div>
+            <div style="background:#fff;padding:28px;border:1px solid #E2E8F0;border-top:none;border-radius:0 0 12px 12px">
+              <p style="font-size:15px;color:#0F172A">Hi <strong>${reactData.firstName || 'there'}</strong>,</p>
+              <p style="font-size:15px;line-height:1.7;color:#0F172A">
+                Unfortunately, we could not confirm your reactivation transfer.
+              </p>
+              <div style="background:#FEF2F2;border-left:4px solid #EF4444;padding:14px;border-radius:0 8px 8px 0;margin:20px 0">
+                <p style="margin:0;color:#991B1B;font-weight:600;">
+                  Reason: ${rejectReason || 'Transfer not confirmed.'}
+                </p>
+              </div>
+              <p style="font-size:14px;color:#374151;">
+                If you believe this is a mistake or need help, please contact our support team.
+              </p>
+              <div style="text-align:center;margin:28px 0;">
+                <a href="mailto:contact.promoearn@gmail.com"
+                   style="display:inline-block;background:#1E40AF;color:#fff;padding:14px 32px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;">
+                  📧 Contact Support
+                </a>
+              </div>
+              <hr style="border:none;border-top:1px solid #E2E8F0;margin:24px 0"/>
+              <p style="font-size:12px;color:#94A3B8;text-align:center">
+                © ${new Date().getFullYear()} PromoEarn. All rights reserved.
+              </p>
+            </div>
+          </div>
+        `,
+      });
+
+      return res.json({ success: true, message: "Reactivation rejected. User has been notified." });
     }
+
   } catch (err) {
-    console.error('Process reactivation error:', err);
-    return res.status(500).json({ success: false, message: 'Failed to process reactivation.' });
+    console.error("processReactivation error:", err);
+    return res.status(500).json({ success: false, message: "Server error." });
   }
 };
