@@ -888,7 +888,43 @@ exports.requestReactivation = async (req, res) => {
       status:     'pending',
       createdAt:  new Date(),
     });
+// After saving to 'reactivations' collection, add this:
 
+// Notify admin by email
+const resend = new Resend(process.env.RESEND_API_KEY);
+await resend.emails.send({
+  from:    'PromoEarn <noreply@promoearnapp.com>',
+  to:      'contact.promoearn@gmail.com',
+  subject: '🔔 New Reactivation Request — PromoEarn Admin',
+  html: `
+    <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px">
+      <div style="background:#1E40AF;padding:20px;border-radius:12px 12px 0 0;text-align:center">
+        <h2 style="color:#fff;margin:0">PromoEarn Admin</h2>
+      </div>
+      <div style="background:#fff;padding:28px;border:1px solid #E2E8F0;border-top:none;border-radius:0 0 12px 12px">
+        <p style="font-size:15px;color:#0F172A">A user has submitted a reactivation request.</p>
+        <div style="background:#EFF6FF;border-radius:10px;padding:16px;margin:16px 0;font-size:14px;color:#0F172A;line-height:1.9;">
+          <p style="margin:0 0 4px;font-weight:700;">Request Details:</p>
+          <p style="margin:0;"><strong>Name:</strong> ${user.firstName || ''} ${user.lastName || ''}</p>
+          <p style="margin:0;"><strong>Email:</strong> ${email}</p>
+          <p style="margin:0;"><strong>Username:</strong> @${user.username || 'N/A'}</p>
+          <p style="margin:0;"><strong>Sender Name (transfer):</strong> ${senderName}</p>
+          <p style="margin:0;"><strong>Submitted:</strong> ${new Date().toLocaleString('en-NG', { timeZone: 'Africa/Lagos' })} (WAT)</p>
+        </div>
+        <div style="text-align:center;margin:24px 0;">
+          <a href="https://promoearnapp.com/reactivations.html"
+             style="display:inline-block;background:#1E40AF;color:#fff;padding:14px 32px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;">
+            👉 Review in Admin Panel
+          </a>
+        </div>
+        <p style="font-size:12px;color:#94A3B8;text-align:center;">
+          © ${new Date().getFullYear()} PromoEarn Admin System
+        </p>
+      </div>
+    </div>
+  `,
+}).catch(err => console.error('Admin notification email failed:', err));
+// .catch so email failure doesn't break the user's response
     return res.json({
       success: true,
       message: "Request submitted. We'll review and restore your account within 24 hours.",
