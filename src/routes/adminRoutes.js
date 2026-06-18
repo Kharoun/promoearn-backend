@@ -8,6 +8,7 @@ const {
   getTasks, createTask, updateTask, deleteTask,
   getPayments, processPayment,
   getReferrals,
+  getReactivations, processReactivation,   // ← add this line
 } = require("../controllers/adminController");
 const {
   broadcastMessage,
@@ -34,6 +35,10 @@ router.delete("/tasks/:id", deleteTask);
 // Payments
 router.get("/payments", getPayments);
 router.put("/payments/:id", processPayment);
+
+// Reactivations
+router.get("/reactivations",       getReactivations);
+router.put("/reactivations/:id",   processReactivation);
 
 // Referrals
 router.get("/referrals", getReferrals);

@@ -110,10 +110,17 @@ function buildBanEmail(firstName, reactivationLink) {
         </div>
 
         <h3 style="color:#0F172A;margin-top:24px;font-size:16px;">How to Reactivate Your Account</h3>
-        <p style="font-size:15px;line-height:1.7;color:#0F172A">
-          Click the button below to pay a one-time reactivation fee of 
-          <strong>₦1,000 (~$0.67)</strong>. Your account will be instantly restored after payment.
+               <p style="font-size:15px;line-height:1.7;color:#0F172A">
+          To reactivate, transfer <strong>₦1,000</strong> to our account below, then click the button to submit your request. Your account will be restored within 24 hours.
         </p>
+        <div style="background:#EEF4FF;border:1px solid #C7D7FA;border-radius:10px;padding:16px;margin:16px 0;font-size:14px;color:#0F172A;">
+          <p style="margin:0 0 6px;font-weight:700;">Transfer ₦1,000 to:</p>
+          <p style="margin:0;line-height:1.8;">
+            <strong>Bank:</strong> Sterling Bank <br/>
+            <strong>Account Number:</strong> 0144524670 <br/>
+            <strong>Account Name:</strong>PROMO EARN DIGITAL HUB
+          </p>
+        </div>
 
         <div style="background:#F0FDF4;border:1px solid #86EFAC;border-radius:10px;padding:16px;margin:20px 0">
           <p style="margin:0 0 8px;font-weight:700;color:#166534;">After payment:</p>
@@ -127,7 +134,7 @@ function buildBanEmail(firstName, reactivationLink) {
         <div style="text-align:center;margin:28px 0;">
           <a href="${reactivationLink}"
              style="display:inline-block;background:#16A34A;color:#fff;padding:16px 36px;border-radius:10px;text-decoration:none;font-weight:700;font-size:16px;">
-            👉 Reactivate My Account — ₦1,000
+                        👉 Submit Reactivation Request
           </a>
         </div>
 

@@ -333,3 +333,70 @@ exports.getReferrals = async (req, res) => {
     return res.status(500).json({ success: false, message: "Failed to fetch referrals." });
   }
 };
+// ─── REACTIVATIONS ────────────────────────────────────────────────────────────
+const { Resend } = require('resend');
+const { createNotification } = require('./notificationsController');
+
+exports.getReactivations = async (req, res) => {
+  try {
+    const db   = getDb();
+    const snap = await db.collection('reactivations').get();
+    const reactivations = snap.docs
+      .map(doc => ({ id: doc.id, ...doc.data() }))
+      .sort((a, b) => (b.createdAt?._seconds || 0) - (a.createdAt?._seconds || 0));
+    return res.status(200).json({ success: true, data: { reactivations } });
+  } catch (err) {
+    console.error('Get reactivations error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to fetch reactivations.' });
+  }
+};
+
+exports.processReactivation = async (req, res) => {
+  try {
+    const { id }     = req.params;
+    const { action } = req.body;
+    const db         = getDb();
+
+    const reqDoc = await db.collection('reactivations').doc(id).get();
+    if (!reqDoc.exists) return res.status(404).json({ success: false, message: 'Request not found.' });
+
+    const r = reqDoc.data();
+    if (r.status !== 'pending') return res.status(400).json({ success: false, message: 'Already processed.' });
+
+    if (action === 'approve') {
+      await db.collection('users').doc(r.userId).update({
+        isBanned:                false,
+        bannedReason:            null,
+        bannedAt:                null,
+        reactivatedAt:           new Date(),
+        reactivationToken:       null,
+        reactivationTokenExpiry: null,
+        inactivityWarningSent:   false,
+        lastLoginAt:             new Date(),
+        updatedAt:               new Date(),
+      });
+
+      await db.collection('transactions').add({
+        userId:      r.userId,
+        type:        'reactivation',
+        description: 'Account reactivation fee',
+        amount:      -0.67,
+        status:      'completed',
+        createdAt:   new Date(),
+      });
+
+      await db.collection('reactivations').doc(id).update({ status: 'approved', updatedAt: new Date() });
+
+      await createNotification(r.userId, {
+        title: '✅ Account Reactivated!',
+        body:  'Your account has been successfully reactivated. Welcome back!',
+        type:  'paymentAlerts',
+      });
+
+      const resend = new Resend(process.env.RESEND_API_KEY);
+      await resend.emails.send({
+        from:    'PromoEarn <noreply@promoearnapp.com>',
+        to:      r.email,
+        subject: '✅ Your PromoEarn account has been reactivated!',
+        html: `
+          <div style="font-family:

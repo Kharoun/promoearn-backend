@@ -42,70 +42,56 @@ const paystackRequest = (method, path, body) => {
 };
 
 // ─── GET NIGERIAN BANKS LIST ──────────────────────────────────────────────────
-// ─── GET NIGERIAN BANKS LIST ──────────────────────────────────────────────────
+// ─── GET NIGERIAN BANKS LIST (hardcoded — no Paystack API needed) ─────────────
 exports.getBanks = async (req, res) => {
-  try {
-    let allBanks = [];
-    let page     = 1;
-    let hasMore  = true;
+  const banks = [
+    { id: 1,  name: "Access Bank",                     code: "044" },
+    { id: 2,  name: "Citibank Nigeria",                code: "023" },
+    { id: 3,  name: "Ecobank Nigeria",                 code: "050" },
+    { id: 4,  name: "Fidelity Bank",                   code: "070" },
+    { id: 5,  name: "First Bank of Nigeria",           code: "011" },
+    { id: 6,  name: "First City Monument Bank (FCMB)", code: "214" },
+    { id: 7,  name: "Globus Bank",                     code: "00103" },
+    { id: 8,  name: "Guaranty Trust Bank (GTBank)",    code: "058" },
+    { id: 9,  name: "Heritage Bank",                   code: "030" },
+    { id: 10, name: "Jaiz Bank",                       code: "301" },
+    { id: 11, name: "Keystone Bank",                   code: "082" },
+    { id: 12, name: "Kuda Bank",                       code: "50211" },
+    { id: 13, name: "Moniepoint MFB",                  code: "50515" },
+    { id: 14, name: "OPay",                            code: "999992" },
+    { id: 15, name: "Palmpay",                         code: "999991" },
+    { id: 16, name: "Polaris Bank",                    code: "076" },
+    { id: 17, name: "Providus Bank",                   code: "101" },
+    { id: 18, name: "Stanbic IBTC Bank",               code: "221" },
+    { id: 19, name: "Standard Chartered Bank",         code: "068" },
+    { id: 20, name: "Sterling Bank",                   code: "232" },
+    { id: 21, name: "Suntrust Bank",                   code: "100" },
+    { id: 22, name: "Titan Trust Bank",                code: "102" },
+    { id: 23, name: "Union Bank of Nigeria",           code: "032" },
+    { id: 24, name: "United Bank for Africa (UBA)",    code: "033" },
+    { id: 25, name: "Unity Bank",                      code: "215" },
+    { id: 26, name: "VFD Microfinance Bank",           code: "566" },
+    { id: 27, name: "Wema Bank",                       code: "035" },
+    { id: 28, name: "Zenith Bank",                     code: "057" },
+  ].sort((a, b) => a.name.localeCompare(b.name));
 
-    while (hasMore) {
-      const response = await paystackRequest(
-        "GET",
-        `/bank?currency=NGN&perPage=100&page=${page}`
-      );
-      if (!response.status || !Array.isArray(response.data)) break;
-
-      allBanks = allBanks.concat(response.data.filter(b => b.active && !b.is_deleted));
-
-      // fewer than 100 results = last page
-      if (response.data.length < 100) hasMore = false;
-      else page++;
-      if (page > 5) hasMore = false; // safety cap
-    }
-
-        // Remove duplicates — Paystack pages can overlap
-        const seen = new Set();
-        allBanks = allBanks.filter(b => {
-          if (seen.has(b.id)) return false;
-          seen.add(b.id);
-          return true;
-        });
-    
-        allBanks.sort((a, b) => a.name.localeCompare(b.name));
-
-    return res.status(200).json({ success: true, data: { banks: allBanks } });
-  } catch (err) {
-    console.error("Get banks error:", err);
-    return res.status(500).json({ success: false, message: "Failed to fetch banks." });
-  }
+  return res.status(200).json({ success: true, data: { banks } });
 };
-
 // ─── VERIFY ACCOUNT NUMBER ────────────────────────────────────────────────────
+// ─── VERIFY ACCOUNT NUMBER (manual — Paystack disabled) ──────────────────────
 exports.verifyAccount = async (req, res) => {
-  try {
-    const { accountNumber, bankCode } = req.body;
-    if (!accountNumber || !bankCode) {
-      return res.status(400).json({ success: false, message: "Account number and bank code are required." });
-    }
-    const response = await paystackRequest(
-      "GET",
-      `/bank/resolve?account_number=${accountNumber}&bank_code=${bankCode}`
-    );
-    if (!response.status) {
-      return res.status(400).json({ success: false, message: "Could not verify account. Please check the details." });
-    }
-    return res.status(200).json({
-      success: true,
-      data: {
-        accountName:   response.data.account_name,
-        accountNumber: response.data.account_number,
-      },
-    });
-  } catch (err) {
-    console.error("Verify account error:", err);
-    return res.status(500).json({ success: false, message: "Account verification failed." });
+  const { accountNumber, bankCode } = req.body;
+  if (!accountNumber || !bankCode) {
+    return res.status(400).json({ success: false, message: "Account number and bank code are required." });
   }
+  // Return the account number as-is — admin verifies on payout
+  return res.status(200).json({
+    success: true,
+    data: {
+      accountName:   "— Verify on payout —",
+      accountNumber: accountNumber,
+    },
+  });
 };
 
 // ─── REQUEST WITHDRAWAL (Paystack Transfer) ───────────────────────────────────
@@ -572,10 +558,10 @@ exports.validateReactivationToken = async (req, res) => {
   }
 };
 
-// ─── INITIALIZE REACTIVATION PAYMENT ─────────────────────────────────────────
-exports.createReactivationCheckout = async (req, res) => {
+// ─── REQUEST REACTIVATION (manual — Paystack disabled) ────────────────────────
+exports.requestReactivation = async (req, res) => {
   try {
-    const { token, email } = req.body;
+    const { token, email, senderName } = req.body;
     const db     = getDb();
     const crypto = require('crypto');
 
@@ -589,9 +575,7 @@ exports.createReactivationCheckout = async (req, res) => {
       .where('email', '==', email.toLowerCase())
       .limit(1).get();
 
-    if (snap.empty) {
-      return res.status(404).json({ success: false, message: 'Account not found.' });
-    }
+    if (snap.empty) return res.status(404).json({ success: false, message: 'Account not found.' });
 
     const user = snap.docs[0].data();
     const uid  = snap.docs[0].id;
@@ -599,141 +583,61 @@ exports.createReactivationCheckout = async (req, res) => {
     if (user.reactivationToken !== tokenHash) {
       return res.status(400).json({ success: false, message: 'Invalid or expired link.' });
     }
-
     if (!user.isBanned) {
       return res.status(400).json({ success: false, message: 'Account is already active.' });
     }
 
-    const amountKobo = 1000 * 100; // ₦1,000
-
-    const response = await paystackRequest('POST', '/transaction/initialize', {
-      email:     user.email,
-      amount:    amountKobo,
-      currency:  'NGN',
-      reference: `PE-REACTIVATE-${uid}-${Date.now()}`,
-      metadata: {
-        userId: uid,
-        email:  user.email,
-        token,
-        type:   'reactivation',
-        custom_fields: [
-          { display_name: 'Product', variable_name: 'product', value: 'Account Reactivation' },
-          { display_name: 'Amount',  variable_name: 'amount',  value: '₦1,000' },
-        ],
-      },
-      callback_url: `https://promoearnapp.com/reactivate.html?token=${token}&email=${encodeURIComponent(email)}&status=paid`,
-    });
-
-    if (!response.status) {
-      return res.status(400).json({ success: false, message: response.message || 'Failed to initialize payment.' });
+    // Prevent duplicate pending requests
+    const existing = await db.collection('reactivations')
+      .where('userId', '==', uid).where('status', '==', 'pending').limit(1).get();
+    if (!existing.empty) {
+      return res.status(400).json({ success: false, message: 'You already have a pending reactivation request.' });
     }
 
-    return res.status(200).json({
-      success:   true,
-      url:       response.data.authorization_url,
-      reference: response.data.reference,
-    });
-  } catch (err) {
-    console.error('Reactivation checkout error:', err);
-    return res.status(500).json({ success: false, message: 'Failed to create reactivation payment.' });
-  }
-};
-
-// ─── VERIFY REACTIVATION PAYMENT ─────────────────────────────────────────────
-exports.verifyReactivation = async (req, res) => {
-  try {
-    const { reference } = req.body;
-    const db = getDb();
-
-    const response = await paystackRequest('GET', `/transaction/verify/${encodeURIComponent(reference)}`);
-
-    if (!response.status || response.data.status !== 'success') {
-      return res.status(400).json({ success: false, message: 'Payment not completed.' });
-    }
-
-    const { userId, email, token, type } = response.data.metadata;
-
-    if (!userId || type !== 'reactivation') {
-      return res.status(400).json({ success: false, message: 'Invalid payment metadata.' });
-    }
-
-    const userDoc = await db.collection('users').doc(userId).get();
-    if (!userDoc.exists) {
-      return res.status(404).json({ success: false, message: 'User not found.' });
-    }
-
-    const user = userDoc.data();
-
-    // Unban and clear token
-    await db.collection('users').doc(userId).update({
-      isBanned:                false,
-      bannedReason:            null,
-      bannedAt:                null,
-      reactivatedAt:           new Date(),
-      reactivationToken:       null,
-      reactivationTokenExpiry: null,
-      inactivityWarningSent:   false,
-      lastLoginAt:             new Date(),
-      updatedAt:               new Date(),
+    // Save reactivation request
+    await db.collection('reactivations').add({
+      userId:     uid,
+      email:      user.email,
+      username:   user.username   || '',
+      firstName:  user.firstName  || '',
+      senderName: senderName      || '',
+      status:     'pending',
+      createdAt:  new Date(),
+      updatedAt:  new Date(),
     });
 
-    // Log transaction
-    await db.collection('transactions').add({
-      userId,
-      type:        'reactivation',
-      description: 'Account reactivation fee',
-      amount:      -0.67,
-      status:      'completed',
-      reference,
-      createdAt:   new Date(),
-    });
-
-    // Send confirmation email
+    // Notify admin
+    const adminEmail = process.env.ADMIN_EMAIL || 'contact.promoearn@gmail.com';
     await resend.emails.send({
       from:    'PromoEarn <noreply@promoearnapp.com>',
-      to:      user.email,
-      subject: '✅ Your PromoEarn account has been reactivated!',
+      to:      adminEmail,
+      subject: `💳 Reactivation Request — ${user.firstName || user.email}`,
       html: `
-        <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px">
-          <div style="background:#16A34A;padding:20px;border-radius:12px 12px 0 0;text-align:center">
-            <h2 style="color:#fff;margin:0">PromoEarn</h2>
+        <div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:20px">
+          <div style="background:#1A56DB;padding:20px;border-radius:12px 12px 0 0;text-align:center">
+            <h2 style="color:#fff;margin:0">PromoEarn Admin</h2>
           </div>
-          <div style="background:#fff;padding:28px;border:1px solid #E2E8F0;border-top:none;border-radius:0 0 12px 12px">
-            <p style="font-size:15px;color:#0F172A">Hi <strong>${user.firstName || 'User'}</strong>,</p>
-            <p style="font-size:15px;line-height:1.7;color:#0F172A">
-              Your PromoEarn account has been successfully reactivated! 🎉
-            </p>
-            <div style="background:#F0FDF4;border-left:4px solid #16A34A;padding:14px;border-radius:0 8px 8px 0;margin:20px 0">
-              <p style="margin:0;color:#166534;font-weight:600;">✅ Your account is now fully active again.</p>
-            </div>
-            <div style="text-align:center;margin:24px 0;">
-              <a href="https://app.promoearnapp.com/"
-                 style="display:inline-block;background:#1A56DB;color:#fff;padding:14px 32px;border-radius:10px;text-decoration:none;font-weight:700;">
-                👉 Log In Now
-              </a>
-            </div>
-            <hr style="border:none;border-top:1px solid #E2E8F0;margin:24px 0"/>
-            <p style="font-size:12px;color:#94A3B8;text-align:center">
-              © ${new Date().getFullYear()} PromoEarn. All rights reserved.
-            </p>
+          <div style="background:#fff;padding:24px;border:1px solid #E2E8F0;border-top:none;border-radius:0 0 12px 12px">
+            <p style="font-size:15px;color:#0F172A;font-weight:700;">New Reactivation Request</p>
+            <table style="width:100%;border-collapse:collapse;font-size:14px;">
+              <tr><td style="padding:8px 0;color:#64748B;">User</td><td style="font-weight:700;">${user.firstName || ''} (@${user.username || user.email})</td></tr>
+              <tr><td style="padding:8px 0;color:#64748B;">Email</td><td>${user.email}</td></tr>
+              <tr><td style="padding:8px 0;color:#64748B;">Sender Name</td><td style="font-weight:700;color:#1A56DB;">${senderName || '(not provided)'}</td></tr>
+              <tr><td style="padding:8px 0;color:#64748B;">Amount</td><td style="font-weight:700;color:#16A34A;">₦1,000</td></tr>
+            </table>
+            <p style="font-size:13px;color:#64748B;margin-top:16px;">Go to the admin panel → Reactivations to approve or reject.</p>
           </div>
         </div>
       `,
     });
 
-    await createNotification(userId, {
-      title: '✅ Account Reactivated!',
-      body:  'Your account has been successfully reactivated. Welcome back!',
-      type:  'paymentAlerts',
-    });
-
     return res.status(200).json({
       success: true,
-      message: 'Account reactivated successfully! You can now log in.',
+      message: 'Request submitted! Your account will be reviewed within 24 hours.',
     });
   } catch (err) {
-    console.error('Verify reactivation error:', err);
-    return res.status(500).json({ success: false, message: 'Failed to verify reactivation payment.' });
+    console.error('Request reactivation error:', err);
+    return res.status(500).json({ success: false, message: 'Failed to submit reactivation request.' });
   }
 };
 // ─── POST /api/v1/payments/manual-activation ─────────────────────────────────
