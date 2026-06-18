@@ -8,7 +8,8 @@ const {
   getTasks, createTask, updateTask, deleteTask,
   getPayments, processPayment,
   getReferrals,
-  getReactivations, processReactivation,   // ← add this line
+  getReactivations, processReactivation,
+  updateCampaignStatus,
 } = require("../controllers/adminController");
 const {
   broadcastMessage,
@@ -36,7 +37,8 @@ router.delete("/tasks/:id", deleteTask);
 router.get("/payments", getPayments);
 router.put("/payments/:id", processPayment);
 
-router.patch("/campaigns/:id/status", authMiddleware, adminController.updateCampaignStatus);
+router.patch("/campaigns/:id/status", updateCampaignStatus);
+
 // Reactivations
 router.get("/reactivations",       getReactivations);
 router.put("/reactivations/:id",   processReactivation);
