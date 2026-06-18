@@ -208,145 +208,86 @@ exports.processPayment = async (req, res) => {
     const { id }     = req.params;
     const { action } = req.body;
     const db         = getDb();
-    const admin      = require("firebase-admin");
-    const axios      = require("axios");
-    const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY;
 
-    if (!["approve", "reject"].includes(action)) {
-      return res.status(400).json({ success: false, message: "Action must be 'approve' or 'reject'." });
-    }
-
-    const paymentDoc = await db.collection("payments").doc(id).get();
-    if (!paymentDoc.exists) {
+    const payDoc = await db.collection("payments").doc(id).get();
+    if (!payDoc.exists) {
       return res.status(404).json({ success: false, message: "Payment not found." });
     }
-
-    const payment = paymentDoc.data();
+    const payment = payDoc.data();
 
     if (payment.status !== "pending") {
-      return res.status(400).json({ success: false, message: "This payment has already been processed." });
+      return res.status(400).json({ success: false, message: "Payment already processed." });
     }
 
-    // ── REJECT: refund balance, mark rejected ───────────────────────────────
-    if (action === "reject") {
+    if (action === "approve") {
+      // Mark as approved — admin already sent the money manually via bank app
       await db.collection("payments").doc(id).update({
-        status:      "rejected",
-        processedAt: new Date(),
-        processedBy: req.user.uid,
-        updatedAt:   new Date(),
+        status:     "approved",
+        approvedAt: new Date(),
+        updatedAt:  new Date(),
       });
 
+      // Mark the linked transaction as completed
+      const txSnap = await db.collection("transactions")
+        .where("paymentId", "==", id).limit(1).get();
+      if (!txSnap.empty) {
+        await txSnap.docs[0].ref.update({ status: "completed" });
+      }
+
+      // Notify user
+      await db.collection("notifications").add({
+        userId:    payment.userId,
+        title:     "💸 Withdrawal Processed!",
+        body:      `Your withdrawal of $${payment.amountAfterFee?.toFixed(2)} (₦${Math.round(payment.amountNGN || 0).toLocaleString()}) to ${payment.bankName} has been sent. Check your account within 24 hours.`,
+        type:      "paymentAlerts",
+        read:      false,
+        createdAt: new Date(),
+      });
+
+      return res.json({ success: true, message: "Withdrawal approved. User has been notified." });
+
+    } else if (action === "reject") {
+      // Refund balance back to user
       const userDoc = await db.collection("users").doc(payment.userId).get();
       if (userDoc.exists) {
         await db.collection("users").doc(payment.userId).update({
-          balance:   (userDoc.data().balance || 0) + payment.amount,
+          balance:   (userDoc.data().balance || 0) + (payment.amount || 0),
           updatedAt: new Date(),
         });
-
-        const txSnap = await db.collection("transactions")
-          .where("paymentId", "==", id).limit(1).get();
-        if (!txSnap.empty) {
-          await txSnap.docs[0].ref.update({ status: "rejected" });
-        }
-
-        await db.collection("notifications").add({
-          userId:    payment.userId,
-          title:     "❌ Withdrawal Rejected",
-          message:   `Your withdrawal of $${payment.amount.toFixed(2)} was rejected and your balance has been refunded. Contact support if you have questions.`,
-          type:      "bonus",
-          read:      false,
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
       }
 
-      return res.json({ success: true, message: "Payment rejected and balance refunded." });
-    }
+      await db.collection("payments").doc(id).update({
+        status:     "rejected",
+        rejectedAt: new Date(),
+        updatedAt:  new Date(),
+      });
 
-    // ── APPROVE: fire Paystack transfer now ─────────────────────────────────
-
-    // Step A: create transfer recipient
-    let recipientCode;
-    try {
-      const recipientRes = await axios.post(
-        "https://api.paystack.co/transferrecipient",
-        {
-          type:           "nuban",
-          name:           payment.accountName,
-          account_number: payment.accountNumber,
-          bank_code:      payment.bankCode || "",
-          currency:       "NGN",
-        },
-        { headers: { Authorization: `Bearer ${PAYSTACK_SECRET}` } }
-      );
-      recipientCode = recipientRes.data?.data?.recipient_code;
-      if (!recipientCode) throw new Error("No recipient code returned");
-    } catch (err) {
-      console.error("Recipient creation failed:", err.response?.data || err.message);
-      return res.status(502).json({ success: false, message: "Failed to create transfer recipient. Check bank details." });
-    }
-
-    // Step B: initiate transfer
-    const amountKobo = Math.round((payment.amountAfterFee || payment.amount) * 1500 * 100);
-    let transferCode, transferStatus;
-    try {
-      const transferRes = await axios.post(
-        "https://api.paystack.co/transfer",
-        {
-          source:    "balance",
-          amount:    amountKobo,
-          recipient: recipientCode,
-          reason:    `PromoEarn withdrawal for @${payment.username}`,
-        },
-        { headers: { Authorization: `Bearer ${PAYSTACK_SECRET}` } }
-      );
-
-      if (!transferRes.data?.status) {
-        const psMsg = transferRes.data?.message || "Transfer failed";
-        console.error("Paystack transfer failed:", psMsg);
-        return res.status(502).json({ success: false, message: `Paystack: ${psMsg}` });
+      // Mark the linked transaction as failed
+      const txSnap = await db.collection("transactions")
+        .where("paymentId", "==", id).limit(1).get();
+      if (!txSnap.empty) {
+        await txSnap.docs[0].ref.update({ status: "failed" });
       }
 
-      transferCode   = transferRes.data.data.transfer_code;
-      transferStatus = transferRes.data.data.status;
-    } catch (err) {
-      console.error("Transfer failed:", err.response?.data || err.message);
-      return res.status(502).json({ success: false, message: "Transfer failed. Check Paystack balance and try again." });
+      // Notify user + tell them they were refunded
+      await db.collection("notifications").add({
+        userId:    payment.userId,
+        title:     "⚠️ Withdrawal Not Processed",
+        body:      `Your withdrawal of $${payment.amount?.toFixed(2)} could not be processed. Your balance has been refunded. Please contact support if you need help.`,
+        type:      "paymentAlerts",
+        read:      false,
+        createdAt: new Date(),
+      });
+
+      return res.json({ success: true, message: "Withdrawal rejected and balance refunded to user." });
+
+    } else {
+      return res.status(400).json({ success: false, message: "Invalid action. Use 'approve' or 'reject'." });
     }
-
-    // Step C: mark approved in Firestore
-    await db.collection("payments").doc(id).update({
-      status:        "approved",
-      recipientCode,
-      transferCode,
-      transferStatus,
-      processedAt:   new Date(),
-      processedBy:   req.user.uid,
-      updatedAt:     new Date(),
-    });
-
-    const txSnap = await db.collection("transactions")
-      .where("paymentId", "==", id).limit(1).get();
-    if (!txSnap.empty) {
-      await txSnap.docs[0].ref.update({ status: "approved", transferCode });
-    }
-
-    await db.collection("notifications").add({
-      userId:    payment.userId,
-      title:     "✅ Withdrawal Approved!",
-      message:   `Your withdrawal of $${(payment.amountAfterFee || payment.amount).toFixed(2)} (₦${((payment.amountNGN) || 0).toLocaleString()}) to ${payment.bankName} has been approved and sent. Arrives within 24 hours.`,
-      type:      "bonus",
-      read:      false,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
-
-    return res.json({
-      success: true,
-      message: `Transfer sent to ${payment.accountName} at ${payment.bankName}.`,
-    });
 
   } catch (err) {
     console.error("Process payment error:", err);
-    return res.status(500).json({ success: false, message: "Failed to process payment." });
+    return res.status(500).json({ success: false, message: "Server error." });
   }
 };
 
