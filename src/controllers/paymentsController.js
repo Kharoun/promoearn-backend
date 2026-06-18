@@ -42,16 +42,31 @@ const paystackRequest = (method, path, body) => {
 };
 
 // ─── GET NIGERIAN BANKS LIST ──────────────────────────────────────────────────
+// ─── GET NIGERIAN BANKS LIST ──────────────────────────────────────────────────
 exports.getBanks = async (req, res) => {
   try {
-    const response = await paystackRequest("GET", "/bank?currency=NGN&perPage=100");
-    if (!response.status) {
-      return res.status(400).json({ success: false, message: "Failed to fetch banks." });
+    let allBanks = [];
+    let page     = 1;
+    let hasMore  = true;
+
+    while (hasMore) {
+      const response = await paystackRequest(
+        "GET",
+        `/bank?currency=NGN&perPage=100&page=${page}`
+      );
+      if (!response.status || !Array.isArray(response.data)) break;
+
+      allBanks = allBanks.concat(response.data.filter(b => b.active && !b.is_deleted));
+
+      // fewer than 100 results = last page
+      if (response.data.length < 100) hasMore = false;
+      else page++;
+      if (page > 5) hasMore = false; // safety cap
     }
-    return res.status(200).json({
-      success: true,
-      data: { banks: response.data },
-    });
+
+    allBanks.sort((a, b) => a.name.localeCompare(b.name));
+
+    return res.status(200).json({ success: true, data: { banks: allBanks } });
   } catch (err) {
     console.error("Get banks error:", err);
     return res.status(500).json({ success: false, message: "Failed to fetch banks." });
