@@ -64,7 +64,15 @@ exports.getBanks = async (req, res) => {
       if (page > 5) hasMore = false; // safety cap
     }
 
-    allBanks.sort((a, b) => a.name.localeCompare(b.name));
+        // Remove duplicates — Paystack pages can overlap
+        const seen = new Set();
+        allBanks = allBanks.filter(b => {
+          if (seen.has(b.id)) return false;
+          seen.add(b.id);
+          return true;
+        });
+    
+        allBanks.sort((a, b) => a.name.localeCompare(b.name));
 
     return res.status(200).json({ success: true, data: { banks: allBanks } });
   } catch (err) {
