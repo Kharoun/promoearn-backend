@@ -22,6 +22,7 @@ const {
   createReactivationCheckout,
   verifyReactivation,
   manualActivation,
+  requestReactivation,
 } = require('../controllers/paymentsController');
 
 // ── Public routes (no auth — user is banned so they have no token) ──
@@ -39,6 +40,7 @@ router.post("/webhook", express.raw({ type:"application/json" }), paystackWebhoo
 // Protected routes
 router.post("/create-checkout",  protect, createCheckout);
 router.post("/verify-payment",   protect, verifyPayment);
+router.post('/request-reactivation', requestReactivation);
 router.get("/transactions",      protect, getTransactions);
 router.post("/withdraw",         protect, requestWithdrawal);
 router.post("/manual-activation", protect, manualActivation);

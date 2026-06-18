@@ -770,7 +770,46 @@ exports.getTransactions = async (req, res) => {
 
 // ─── REACTIVATION ─────────────────────────────────────────────────────────────
 exports.validateReactivationToken = async (req, res) => {
-  return res.status(501).json({ success: false, message: "Not implemented yet." });
+  try {
+    const { token, email } = req.query;
+    if (!token || !email) {
+      return res.status(400).json({ success: false, message: "Missing token or email." });
+    }
+
+    const db = getDb();
+    const snap = await db.collection("reactivations")
+      .where("token", "==", token)
+      .where("email", "==", email)
+      .limit(1)
+      .get();
+
+    if (snap.empty) {
+      return res.status(404).json({ success: false, message: "Invalid or expired reactivation link." });
+    }
+
+    const doc  = snap.docs[0];
+    const data = doc.data();
+
+    if (data.status === "used") {
+      return res.status(400).json({ success: false, message: "This reactivation link has already been used." });
+    }
+
+    // Check expiry (tokens valid for 7 days)
+    const createdAt = data.createdAt?.toDate?.() || new Date(data.createdAt);
+    const ageMs     = Date.now() - createdAt.getTime();
+    if (ageMs > 7 * 24 * 60 * 60 * 1000) {
+      return res.status(400).json({ success: false, message: "This reactivation link has expired. Please contact support." });
+    }
+
+    // Load user's first name
+    const userDoc = await db.collection("users").doc(data.userId).get();
+    const firstName = userDoc.exists ? (userDoc.data().firstName || "there") : "there";
+
+    return res.json({ success: true, data: { firstName } });
+  } catch (err) {
+    console.error("validateReactivationToken error:", err);
+    return res.status(500).json({ success: false, message: "Server error." });
+  }
 };
 
 exports.createReactivationCheckout = async (req, res) => {
@@ -785,4 +824,51 @@ exports.verifyReactivation = async (req, res) => {
 exports.manualActivation = async (req, res) => {
   return res.status(501).json({ success: false, message: "Not implemented yet." });
 };
-  
+exports.requestReactivation = async (req, res) => {
+  try {
+    const { token, email, senderName } = req.body;
+    if (!token || !email || !senderName) {
+      return res.status(400).json({ success: false, message: "Missing required fields." });
+    }
+
+    const db = getDb();
+    const snap = await db.collection("reactivations")
+      .where("token", "==", token)
+      .where("email", "==", email)
+      .limit(1)
+      .get();
+
+    if (snap.empty) {
+      return res.status(404).json({ success: false, message: "Invalid link." });
+    }
+
+    const doc  = snap.docs[0];
+    const data = doc.data();
+
+    if (data.status === "used" || data.status === "pending") {
+      return res.status(400).json({ success: false, message: "Request already submitted. Please wait for admin review." });
+    }
+
+    // Mark as pending review
+    await doc.ref.update({
+      status:     "pending",
+      senderName,
+      submittedAt: new Date(),
+    });
+
+    // Notify admins via a collection admins can monitor
+    await db.collection("adminNotifications").add({
+      type:       "reactivation_request",
+      userId:     data.userId,
+      email,
+      senderName,
+      reactivationId: doc.id,
+      createdAt:  new Date(),
+    });
+
+    return res.json({ success: true, message: "Request submitted. We'll review and restore your account within 24 hours." });
+  } catch (err) {
+    console.error("requestReactivation error:", err);
+    return res.status(500).json({ success: false, message: "Server error." });
+  }
+};
