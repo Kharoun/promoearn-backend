@@ -745,4 +745,44 @@ exports.manualActivation = async (req, res) => {
       return res.status(500).json({ success: false, message: "Server error." });
     }
   };
+  // ─── PAYSTACK WEBHOOK ─────────────────────────────────────────────────────────
+exports.paystackWebhook = async (req, res) => {
+  // TODO: add Paystack signature verification here
+  return res.sendStatus(200);
+};
+
+// ─── GET TRANSACTIONS ─────────────────────────────────────────────────────────
+exports.getTransactions = async (req, res) => {
+  try {
+    const db  = getDb();
+    const uid = req.user.uid;
+    const snap = await db.collection("transactions")
+      .where("userId", "==", uid)
+      .orderBy("createdAt", "desc")
+      .get();
+    const transactions = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    return res.json({ success: true, data: { transactions } });
+  } catch (err) {
+    console.error("Get transactions error:", err);
+    return res.status(500).json({ success: false, message: "Failed to fetch transactions." });
+  }
+};
+
+// ─── REACTIVATION ─────────────────────────────────────────────────────────────
+exports.validateReactivationToken = async (req, res) => {
+  return res.status(501).json({ success: false, message: "Not implemented yet." });
+};
+
+exports.createReactivationCheckout = async (req, res) => {
+  return res.status(501).json({ success: false, message: "Not implemented yet." });
+};
+
+exports.verifyReactivation = async (req, res) => {
+  return res.status(501).json({ success: false, message: "Not implemented yet." });
+};
+
+// ─── MANUAL ACTIVATION ────────────────────────────────────────────────────────
+exports.manualActivation = async (req, res) => {
+  return res.status(501).json({ success: false, message: "Not implemented yet." });
+};
   
