@@ -643,112 +643,73 @@ exports.requestReactivation = async (req, res) => {
 // ─── POST /api/v1/payments/manual-activation ─────────────────────────────────
 // REPLACE the existing exports.manualActivation in paymentsController.js with this.
 // NOTE: resend is already initialized at the top of paymentsController.js — no extra import needed.
+// ─── MANUAL BANK TRANSFER ACTIVATION ─────────────────────────────────────────
 exports.manualActivation = async (req, res) => {
-    try {
-      const { userId, email, senderName } = req.body;
-      const db = getDb();
-  
-      if (!userId || !senderName || !senderName.trim()) {
-        return res.status(400).json({ success: false, message: "Sender's name is required." });
-      }
-  
-      const cleanSenderName = senderName.trim();
-      const submittedAt     = new Date().toLocaleString("en-US", {
-        timeZone: "Africa/Lagos",
-        month: "short", day: "numeric", year: "numeric",
-        hour: "2-digit", minute: "2-digit",
-      });
-  
-      // 1. Save the pending activation request for admin to review
-      await db.collection("pendingActivations").add({
-        userId,
-        email:      email || "",
-        senderName: cleanSenderName,
-        status:     "pending",
-        createdAt:  new Date(),
-      });
-  
-      // 2. Firestore admin notification (for in-app admin panel badge)
-      await db.collection("adminNotifications").add({
-        type:       "manual_activation",
-        userId,
-        email,
-        senderName: cleanSenderName,
-        message:    `New activation request from ${email}. Sender name: ${cleanSenderName}`,
-        createdAt:  new Date(),
-        read:       false,
-      });
-  
-      // 3. Email the admin immediately via Resend
-      const adminEmail = process.env.ADMIN_EMAIL || "contact.promoearn@gmail.com";
-      await resend.emails.send({
-        from:    "PromoEarn Alerts <noreply@promoearnapp.com>",
-        to:      adminEmail,
-        subject: "🔔 New Activation Request — Action Required",
-        html: `
-          <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px">
-            <div style="background:#1A56DB;padding:20px;border-radius:12px 12px 0 0;text-align:center">
-              <h2 style="color:#fff;margin:0">PromoEarn Admin Alert</h2>
-            </div>
-            <div style="background:#fff;padding:28px;border:1px solid #E2E8F0;border-top:none;border-radius:0 0 12px 12px">
-              <p style="font-size:15px;color:#0F172A;margin-top:0">
-                A user has submitted a manual bank transfer for account activation.
-              </p>
-  
-              <table style="width:100%;border-collapse:collapse;margin:20px 0;font-size:14px">
-                <tr style="background:#F8FAFF">
-                  <td style="padding:10px 14px;color:#64748B;border:1px solid #E2E8F0;width:35%">User Email</td>
-                  <td style="padding:10px 14px;color:#0F172A;font-weight:700;border:1px solid #E2E8F0">${email}</td>
-                </tr>
-                <tr>
-                  <td style="padding:10px 14px;color:#64748B;border:1px solid #E2E8F0">Sender's Name</td>
-                  <td style="padding:10px 14px;color:#1A56DB;font-weight:700;border:1px solid #E2E8F0">${cleanSenderName}</td>
-                </tr>
-                <tr style="background:#F8FAFF">
-                  <td style="padding:10px 14px;color:#64748B;border:1px solid #E2E8F0">Amount</td>
-                  <td style="padding:10px 14px;color:#0F172A;font-weight:700;border:1px solid #E2E8F0">₦4,500</td>
-                </tr>
-                <tr>
-                  <td style="padding:10px 14px;color:#64748B;border:1px solid #E2E8F0">Submitted At</td>
-                  <td style="padding:10px 14px;color:#0F172A;border:1px solid #E2E8F0">${submittedAt} (WAT)</td>
-                </tr>
-              </table>
-  
-              <div style="background:#FFFBEB;border-left:4px solid #F59E0B;padding:14px;border-radius:0 8px 8px 0;margin:20px 0">
-                <p style="margin:0;color:#92600A;font-weight:600;font-size:13px">
-                  ⚠️ Action required: Open your bank app, search for a ₦4,500 transfer from <strong>${cleanSenderName}</strong>, confirm it, then approve in the admin panel.
-                </p>
-              </div>
-  
-              <div style="text-align:center;margin:24px 0">
-                <a href="https://admin.promoearnapp.com"
-                   style="display:inline-block;background:#1A56DB;color:#fff;padding:14px 32px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px">
-                  👉 Open Admin Panel
-                </a>
-              </div>
-  
-              <hr style="border:none;border-top:1px solid #E2E8F0;margin:24px 0"/>
-              <p style="font-size:12px;color:#94A3B8;text-align:center;margin:0">
-                © ${new Date().getFullYear()} PromoEarn. This is an automated alert — do not reply to this email.
-              </p>
-            </div>
-          </div>
-        `,
-      });
-  
-      return res.status(200).json({
-        success: true,
-        message: "Activation request received. Your account will be activated within 1–6 hours.",
-      });
-    } catch (err) {
-      console.error("Manual activation error:", err);
-      return res.status(500).json({ success: false, message: "Server error." });
+  try {
+    const db  = getDb();
+    const uid = req.user.uid;
+
+    const { senderName, amountNGN } = req.body;
+
+    if (!senderName || !senderName.trim()) {
+      return res.status(400).json({ success: false, message: "Sender name is required." });
     }
-  };
-  // ─── PAYSTACK WEBHOOK ─────────────────────────────────────────────────────────
-exports.paystackWebhook = async (req, res) => {
-  // TODO: add Paystack signature verification here
-  return res.sendStatus(200);
+
+    // 1. Load user
+    const userDoc = await db.collection("users").doc(uid).get();
+    if (!userDoc.exists) {
+      return res.status(404).json({ success: false, message: "User not found." });
+    }
+    const user = userDoc.data();
+
+    if (user.isActivated) {
+      return res.status(400).json({ success: false, message: "Account is already activated." });
+    }
+
+    // 2. Check if there's already a pending submission
+    const existing = await db.collection("pendingActivations")
+      .where("userId", "==", uid)
+      .where("status", "==", "pending")
+      .limit(1)
+      .get();
+
+    if (!existing.empty) {
+      return res.status(400).json({
+        success: false,
+        message: "You already have a pending activation under review. Please wait for admin approval.",
+      });
+    }
+
+    // 3. Save the pending activation record
+    await db.collection("pendingActivations").add({
+      userId:     uid,
+      username:   user.username  || "",
+      email:      user.email     || "",
+      senderName: senderName.trim(),
+      amountNGN:  amountNGN || 4500,
+      status:     "pending",
+      createdAt:  new Date(),
+    });
+
+    // 4. Notify the user
+    await db.collection("notifications").add({
+      userId:    uid,
+      title:     "⏳ Transfer Submitted!",
+      body:      "We received your transfer details and will confirm your payment within 24 hours.",
+      type:      "paymentAlerts",
+      read:      false,
+      createdAt: new Date(),
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: "Transfer details submitted! Your account will be activated within 24 hours after we confirm your payment.",
+    });
+
+  } catch (err) {
+    console.error("Manual activation error:", err);
+    return res.status(500).json({ success: false, message: "Server error. Please try again." });
+  }
 };
 
 // ─── GET TRANSACTIONS ─────────────────────────────────────────────────────────
