@@ -718,9 +718,7 @@ exports.verifyReactivation = async (req, res) => {
 };
 
 // ─── MANUAL ACTIVATION ────────────────────────────────────────────────────────
-// exports.manualActivation = async (req, res) => {
-//   return res.status(501).json({ success: false, message: "Not implemented yet." });
-// };
+
 exports.requestReactivation = async (req, res) => {
   try {
     const { token, email, senderName } = req.body;
@@ -824,5 +822,68 @@ await resend.emails.send({
   } catch (err) {
     console.error("requestReactivation error:", err);
     return res.status(500).json({ success: false, message: "Server error." });
+  }
+};
+// ─── MANUAL ACTIVATION ────────────────────────────────────────────────────────
+exports.manualActivation = async (req, res) => {
+  try {
+    const db  = getDb();
+    const uid = req.user.uid;
+    const { senderName, amountNGN } = req.body;
+
+    if (!senderName || !senderName.trim()) {
+      return res.status(400).json({ success: false, message: "Sender name is required." });
+    }
+
+    const userDoc = await db.collection("users").doc(uid).get();
+    if (!userDoc.exists) {
+      return res.status(404).json({ success: false, message: "User not found." });
+    }
+    const user = userDoc.data();
+
+    if (user.isActivated) {
+      return res.status(400).json({ success: false, message: "Account is already activated." });
+    }
+
+    const existing = await db.collection("pendingActivations")
+      .where("userId", "==", uid)
+      .where("status", "==", "pending")
+      .limit(1)
+      .get();
+
+    if (!existing.empty) {
+      return res.status(400).json({
+        success: false,
+        message: "You already have a pending activation under review. Please wait for admin approval.",
+      });
+    }
+
+    await db.collection("pendingActivations").add({
+      userId:     uid,
+      username:   user.username || "",
+      email:      user.email    || "",
+      senderName: senderName.trim(),
+      amountNGN:  amountNGN || 4500,
+      status:     "pending",
+      createdAt:  new Date(),
+    });
+
+    await db.collection("notifications").add({
+      userId:    uid,
+      title:     "⏳ Transfer Submitted!",
+      body:      "We received your transfer details and will confirm your payment within 24 hours.",
+      type:      "paymentAlerts",
+      read:      false,
+      createdAt: new Date(),
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: "Transfer details submitted! Your account will be activated within 24 hours after we confirm your payment.",
+    });
+
+  } catch (err) {
+    console.error("Manual activation error:", err);
+    return res.status(500).json({ success: false, message: "Server error. Please try again." });
   }
 };
