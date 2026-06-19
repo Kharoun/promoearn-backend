@@ -1,4 +1,6 @@
 const express = require("express");
+const { Resend } = require('resend');
+const resend = new Resend(process.env.RESEND_API_KEY);
 const router  = express.Router();
 // const axios   = require("axios");
 const admin   = require("firebase-admin");
@@ -105,7 +107,39 @@ router.post("/manual-payment", verifyToken, async (req, res) => {
       updatedAt:     admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    return res.json({ success: true, message: "Payment submission received. Your campaign will be reviewed within 1–6 hours." });
+        // Notify admin by email
+        resend.emails.send({
+          from:    'PromoEarn <noreply@promoearnapp.com>',
+          to:      'contact.promoearn@gmail.com',
+          subject: '💳 New Campaign Payment Transfer — PromoEarn Admin',
+          html: `
+            <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px">
+              <div style="background:#7C3AED;padding:20px;border-radius:12px 12px 0 0;text-align:center">
+                <h2 style="color:#fff;margin:0">PromoEarn Admin</h2>
+              </div>
+              <div style="background:#fff;padding:28px;border:1px solid #E2E8F0;border-top:none;border-radius:0 0 12px 12px">
+                <p style="font-size:15px;color:#0F172A">A user has submitted a <strong>campaign bank transfer</strong>.</p>
+                <div style="background:#F5F3FF;border-radius:10px;padding:16px;margin:16px 0;font-size:14px;color:#0F172A;line-height:1.9;">
+                  <p style="margin:0 0 4px;font-weight:700;">Campaign Details:</p>
+                  <p style="margin:0;"><strong>Brand:</strong> ${campaign.brandName}</p>
+                  <p style="margin:0;"><strong>Campaign ID:</strong> ${campaignId}</p>
+                  <p style="margin:0;"><strong>Sender Name:</strong> ${senderName.trim()}</p>
+                  <p style="margin:0;"><strong>Amount:</strong> ₦${(amountNGN || 0).toLocaleString()}</p>
+                  <p style="margin:0;"><strong>Quoted Total:</strong> $${campaign.quotedTotal || 0}</p>
+                  <p style="margin:0;"><strong>Submitted:</strong> ${new Date().toLocaleString('en-NG', { timeZone: 'Africa/Lagos' })} (WAT)</p>
+                </div>
+                <div style="text-align:center;margin:24px 0;">
+                  <a href="https://promo-earn-admin.vercel.app"
+                     style="display:inline-block;background:#7C3AED;color:#fff;padding:14px 32px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;">
+                    👉 Review in Admin Panel
+                  </a>
+                </div>
+              </div>
+            </div>
+          `,
+        }).catch(err => console.error('Admin campaign payment email failed:', err));
+    
+        return res.json({ success: true, message: "Payment submission received. Your campaign will be reviewed within 1–6 hours." });
   } catch (err) {
     console.error("Campaign manual-payment error:", err);
     return res.status(500).json({ success: false, message: "Server error." });

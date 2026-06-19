@@ -877,6 +877,37 @@ exports.manualActivation = async (req, res) => {
       createdAt: new Date(),
     });
 
+    // Notify admin by email
+    resend.emails.send({
+      from:    'PromoEarn <noreply@promoearnapp.com>',
+      to:      'contact.promoearn@gmail.com',
+      subject: '🔔 New Activation Request — PromoEarn Admin',
+      html: `
+        <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px">
+          <div style="background:#1E40AF;padding:20px;border-radius:12px 12px 0 0;text-align:center">
+            <h2 style="color:#fff;margin:0">PromoEarn Admin</h2>
+          </div>
+          <div style="background:#fff;padding:28px;border:1px solid #E2E8F0;border-top:none;border-radius:0 0 12px 12px">
+            <p style="font-size:15px;color:#0F172A">A user has submitted a <strong>manual bank transfer activation</strong>.</p>
+            <div style="background:#EFF6FF;border-radius:10px;padding:16px;margin:16px 0;font-size:14px;color:#0F172A;line-height:1.9;">
+              <p style="margin:0 0 4px;font-weight:700;">Details:</p>
+              <p style="margin:0;"><strong>Username:</strong> @${user.username || 'N/A'}</p>
+              <p style="margin:0;"><strong>Email:</strong> ${user.email || 'N/A'}</p>
+              <p style="margin:0;"><strong>Sender Name:</strong> ${senderName.trim()}</p>
+              <p style="margin:0;"><strong>Amount:</strong> ₦${(amountNGN || 4500).toLocaleString()}</p>
+              <p style="margin:0;"><strong>Submitted:</strong> ${new Date().toLocaleString('en-NG', { timeZone: 'Africa/Lagos' })} (WAT)</p>
+            </div>
+            <div style="text-align:center;margin:24px 0;">
+              <a href="https://promo-earn-admin.vercel.app"
+                 style="display:inline-block;background:#1E40AF;color:#fff;padding:14px 32px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;">
+                👉 Review in Admin Panel
+              </a>
+            </div>
+          </div>
+        </div>
+      `,
+    }).catch(err => console.error('Admin activation email failed:', err));
+
     return res.status(201).json({
       success: true,
       message: "Transfer details submitted! Your account will be activated within 24 hours after we confirm your payment.",
