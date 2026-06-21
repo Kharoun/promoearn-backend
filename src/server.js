@@ -78,8 +78,8 @@ app.use("/api/v1/payments/webhook", express.raw({ type: "application/json" }));
 app.use("/api/v1/campaigns/webhook", express.raw({ type: "application/json" })); // ← add this
 
 // Body parsing
-app.use(express.json({ limit: "10kb" }));
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: "5mb" }));
+app.use(express.urlencoded({ limit: "5mb", extended: true }));
 
 // ─── Health Check ─────────────────────────────────────────────────────────────
 app.get("/health", (req, res) => {
