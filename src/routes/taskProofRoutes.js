@@ -10,6 +10,8 @@ router.post("/:id/submit-proof", protect, async (req, res) => {
     const taskId                     = req.params.id;
     const userId                     = req.user.uid;
     const { base64Image, taskTitle } = req.body;
+    
+console.log("[submit-proof] base64Image length:", base64Image ? base64Image.length : "NULL/UNDEFINED");
     const db                         = getDb();
 
     // 1. Task must exist
