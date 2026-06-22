@@ -16,6 +16,12 @@ const {
   sendSingleMessage,
   getMessageHistory,
 } = require("../controllers/Adminmessagescontroller");
+const {
+  broadcastPushNotification,
+  sendSinglePushNotification,
+  getPushNotificationHistory,
+  getPushNotificationStats,
+} = require("../controllers/pushNotificationsController");
 
 // All routes protected by adminMiddleware
 router.use(adminMiddleware);
@@ -46,10 +52,16 @@ router.put("/reactivations/:id",   processReactivation);
 // Referrals
 router.get("/referrals", getReferrals);
 
-// Messages
+// Messages (email)
 router.post("/messages/broadcast", broadcastMessage);
 router.post("/messages/single",    sendSingleMessage);
 router.get("/messages/history",    getMessageHistory);
+
+// Push Notifications
+router.post("/push-notifications/broadcast", broadcastPushNotification);
+router.post("/push-notifications/single",    sendSinglePushNotification);
+router.get("/push-notifications/history",    getPushNotificationHistory);
+router.get("/push-notifications/stats",      getPushNotificationStats);
 
 const { checkInactiveUsers, banAndNotifyUser } = require('../jobs/inactivityJob');
 
