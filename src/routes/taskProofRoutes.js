@@ -1,32 +1,16 @@
-const express  = require("express");
-const admin    = require("firebase-admin");
-const { getDb } = require("../config/firebase");
+const express          = require("express");
+const { getDb }        = require("../config/firebase");
+const { protect }      = require("../middleware/authMiddleware");
 
 const router = express.Router();
 
-// ── Inline auth: reads Bearer token and attaches req.user ──────────────────
-const authenticate = async (req, res, next) => {
-  try {
-    const header = req.headers.authorization || "";
-    const token  = header.startsWith("Bearer ") ? header.slice(7) : null;
-    if (!token) {
-      return res.status(401).json({ success: false, message: "No token provided." });
-    }
-    const decoded = await admin.auth().verifyIdToken(token);
-    req.user = { uid: decoded.uid, email: decoded.email };
-    next();
-  } catch {
-    return res.status(401).json({ success: false, message: "Invalid or expired token." });
-  }
-};
-
 // POST /api/v1/tasks/:id/submit-proof
-router.post("/:id/submit-proof", authenticate, async (req, res) => {
+router.post("/:id/submit-proof", protect, async (req, res) => {
   try {
-    const taskId                    = req.params.id;
-    const userId                    = req.user.uid;
+    const taskId                     = req.params.id;
+    const userId                     = req.user.uid;
     const { base64Image, taskTitle } = req.body;
-    const db                        = getDb();
+    const db                         = getDb();
 
     // 1. Task must exist
     const taskDoc = await db.collection("tasks").doc(taskId).get();
