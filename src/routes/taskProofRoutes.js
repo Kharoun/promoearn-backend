@@ -34,9 +34,17 @@ router.post("/:id/submit-proof", protect, async (req, res) => {
     }
 
     // 3. Proof image required
+    // 3. Proof image required + size guard (Firestore limit ~1 MB per field)
     if (!base64Image) {
-      return res.status(400).json({ success: false, message: "No proof image provided." });
-    }
+        return res.status(400).json({ success: false, message: "No proof image provided." });
+      }
+      const imageSizeBytes = Buffer.byteLength(base64Image, "base64");
+      if (imageSizeBytes > 900_000) {
+        return res.status(400).json({
+          success: false,
+          message: "Screenshot is too large. Please crop or retake it at a lower resolution.",
+        });
+      }
 
     // 4. Get user info
     const userDoc = await db.collection("users").doc(userId).get();
