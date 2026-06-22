@@ -1,16 +1,32 @@
-const express        = require("express");
-const { getDb }      = require("../config/firebase");
-const authMiddleware = require("../middleware/authMiddleware"); // adjust name if needed
+const express  = require("express");
+const admin    = require("firebase-admin");
+const { getDb } = require("../config/firebase");
 
 const router = express.Router();
 
-// POST /api/v1/tasks/:id/submit-proof
-router.post("/:id/submit-proof", authMiddleware, async (req, res) => {
+// ── Inline auth: reads Bearer token and attaches req.user ──────────────────
+const authenticate = async (req, res, next) => {
   try {
-    const taskId      = req.params.id;
-    const userId      = req.user.uid;
+    const header = req.headers.authorization || "";
+    const token  = header.startsWith("Bearer ") ? header.slice(7) : null;
+    if (!token) {
+      return res.status(401).json({ success: false, message: "No token provided." });
+    }
+    const decoded = await admin.auth().verifyIdToken(token);
+    req.user = { uid: decoded.uid, email: decoded.email };
+    next();
+  } catch {
+    return res.status(401).json({ success: false, message: "Invalid or expired token." });
+  }
+};
+
+// POST /api/v1/tasks/:id/submit-proof
+router.post("/:id/submit-proof", authenticate, async (req, res) => {
+  try {
+    const taskId                    = req.params.id;
+    const userId                    = req.user.uid;
     const { base64Image, taskTitle } = req.body;
-    const db          = getDb();
+    const db                        = getDb();
 
     // 1. Task must exist
     const taskDoc = await db.collection("tasks").doc(taskId).get();
@@ -42,7 +58,7 @@ router.post("/:id/submit-proof", authMiddleware, async (req, res) => {
     const userDoc = await db.collection("users").doc(userId).get();
     const user    = userDoc.exists ? userDoc.data() : {};
 
-    // 5. Save submission to Firestore (image stored as base64)
+    // 5. Save submission to Firestore
     await db.collection("taskSubmissions").add({
       taskId,
       taskTitle:   task.title  || taskTitle || "",
@@ -51,7 +67,7 @@ router.post("/:id/submit-proof", authMiddleware, async (req, res) => {
       username:    user.username    || "",
       displayName: `${user.firstName || ""} ${user.lastName || ""}`.trim(),
       email:       user.email       || "",
-      proofBase64: base64Image,           // stored directly in Firestore
+      proofBase64: base64Image,
       proofUrl:    null,
       status:      "pending",
       submittedAt: new Date(),
