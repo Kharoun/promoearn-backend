@@ -567,3 +567,112 @@ exports.updateCampaignStatus = async (req, res) => {
     return res.status(500).json({ success: false, message: "Server error." });
   }
 };
+// ─── TASK SUBMISSIONS (Proof Review) ─────────────────────────────────────────
+
+exports.getTaskSubmissions = async (req, res) => {
+  try {
+    const db     = getDb();
+    const status = req.query.status || "all";
+
+    let query = db.collection("taskSubmissions");
+    if (status !== "all") query = query.where("status", "==", status);
+
+    const snap = await query.get();
+    const submissions = snap.docs
+      .map(doc => ({ id: doc.id, ...doc.data() }))
+      .sort((a, b) => (b.submittedAt?._seconds || 0) - (a.submittedAt?._seconds || 0));
+
+    return res.json({ success: true, data: { submissions } });
+  } catch (err) {
+    console.error("getTaskSubmissions error:", err);
+    return res.status(500).json({ success: false, message: "Server error." });
+  }
+};
+
+exports.processTaskSubmission = async (req, res) => {
+  try {
+    const { id }           = req.params;
+    const { action, note } = req.body;
+    const db               = getDb();
+
+    const subDoc = await db.collection("taskSubmissions").doc(id).get();
+    if (!subDoc.exists) {
+      return res.status(404).json({ success: false, message: "Submission not found." });
+    }
+    const sub = subDoc.data();
+
+    if (sub.status !== "pending") {
+      return res.status(400).json({ success: false, message: "Submission already processed." });
+    }
+
+    if (action === "approve") {
+      const userDoc = await db.collection("users").doc(sub.userId).get();
+      if (!userDoc.exists) {
+        return res.status(404).json({ success: false, message: "User not found." });
+      }
+      const user   = userDoc.data();
+      const reward = parseFloat(sub.taskReward) || 0;
+
+      await db.collection("users").doc(sub.userId).update({
+        balance:        (user.balance        || 0) + reward,
+        totalEarned:    (user.totalEarned    || 0) + reward,
+        tasksCompleted: (user.tasksCompleted || 0) + 1,
+        updatedAt:      new Date(),
+      });
+
+      await db.collection("transactions").add({
+        userId:      sub.userId,
+        type:        "task",
+        description: `Task reward: ${sub.taskTitle}`,
+        amount:      reward,
+        status:      "completed",
+        taskId:      sub.taskId,
+        createdAt:   new Date(),
+      });
+
+      await db.collection("tasks").doc(sub.taskId).update({
+        filled: require("firebase-admin").firestore.FieldValue.increment(1),
+      });
+
+      await db.collection("taskSubmissions").doc(id).update({
+        status:     "approved",
+        note:       note || "",
+        approvedAt: new Date(),
+      });
+
+      await db.collection("notifications").add({
+        userId:    sub.userId,
+        title:     "🎉 Task Approved!",
+        body:      `Your proof for "${sub.taskTitle}" was approved. +$${reward.toFixed(2)} has been added to your balance.`,
+        type:      "taskRewards",
+        read:      false,
+        createdAt: new Date(),
+      });
+
+      return res.json({ success: true, message: "Submission approved and reward credited." });
+
+    } else if (action === "reject") {
+      await db.collection("taskSubmissions").doc(id).update({
+        status:     "rejected",
+        note:       note || "Proof did not meet requirements.",
+        rejectedAt: new Date(),
+      });
+
+      await db.collection("notifications").add({
+        userId:    sub.userId,
+        title:     "❌ Task Proof Rejected",
+        body:      note || `Your proof for "${sub.taskTitle}" was rejected. Please re-read the instructions and try again.`,
+        type:      "taskRewards",
+        read:      false,
+        createdAt: new Date(),
+      });
+
+      return res.json({ success: true, message: "Submission rejected." });
+    } else {
+      return res.status(400).json({ success: false, message: "Invalid action." });
+    }
+  } catch (err) {
+    console.error("processTaskSubmission error:", err);
+    return res.status(500).json({ success: false, message: "Server error." });
+  }
+};

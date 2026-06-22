@@ -10,6 +10,7 @@ const {
   getReferrals,
   getReactivations, processReactivation,
   updateCampaignStatus,
+  getTaskSubmissions, processTaskSubmission, 
 } = require("../controllers/adminController");
 const {
   broadcastMessage,
@@ -38,6 +39,10 @@ router.get("/tasks", getTasks);
 router.post("/tasks", createTask);
 router.put("/tasks/:id", updateTask);
 router.delete("/tasks/:id", deleteTask);
+
+// Task Submissions (proof review)
+router.get("/task-submissions",     getTaskSubmissions);
+router.put("/task-submissions/:id", processTaskSubmission);
 
 // Payments
 router.get("/payments", getPayments);
