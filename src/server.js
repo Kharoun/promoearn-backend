@@ -41,7 +41,7 @@ app.use(
       return callback(null, false); // ← return false instead of throwing an Error
     },
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
+    allowedHeaders: ["Content-Type", "Authorization", "x-app-version"],
     credentials: true,
   })
 );
