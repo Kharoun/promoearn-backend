@@ -21,42 +21,49 @@ exports.getTasks = async (req, res) => {
 };
 
 // ─── COMPLETE TASK ────────────────────────────────────────────────────────────
+// ─── SHARED VERSION CHECK HELPER ─────────────────────────────────────────────
+const MIN_VERSION = "1.1.0";
+
+const compareVersions = (current, required) => {
+  if (!current) return -1;
+  const curr = current.split(".").map(Number);
+  const req  = required.split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    if ((curr[i] || 0) > (req[i] || 0)) return 1;
+    if ((curr[i] || 0) < (req[i] || 0)) return -1;
+  }
+  return 0;
+};
+
+const requireMinVersion = (req, res) => {
+  const appVersion = req.headers["x-app-version"];
+  if (compareVersions(appVersion, MIN_VERSION) < 0) {
+    res.status(426).json({
+      success:         false,
+      updateRequired:  true,
+      message:         "Please update your app to the latest version to complete tasks.",
+      requiredVersion: MIN_VERSION,
+      currentVersion:  appVersion || "unknown",
+    });
+    return false;
+  }
+  return true;
+};
+
+exports.requireMinVersion = requireMinVersion;
+
+// ─── COMPLETE TASK (old endpoint — now fully blocked) ─────────────────────────
 exports.completeTask = async (req, res) => {
   try {
-    const { id } = req.params;
-    const db  = getDb();
-    const uid = req.user.uid;
+    if (!requireMinVersion(req, res)) return;
 
-    // ── Version check — block old app versions ──────────────────────────────
-    const appVersion = req.headers["x-app-version"];
-    const MIN_VERSION = "1.1.0"; // your new version with timer + screenshot
-
-    const compareVersions = (current, required) => {
-      if (!current) return -1;
-      const curr = current.split(".").map(Number);
-      const req  = required.split(".").map(Number);
-      for (let i = 0; i < 3; i++) {
-        if ((curr[i] || 0) > (req[i] || 0)) return 1;
-        if ((curr[i] || 0) < (req[i] || 0)) return -1;
-      }
-      return 0;
-    };
-
-    if (compareVersions(appVersion, MIN_VERSION) < 0) {
-      return res.status(426).json({
-        success:         false,
-        updateRequired:  true,
-        message:         "Please update your app to the latest version to complete tasks.",
-        requiredVersion: MIN_VERSION,
-        currentVersion:  appVersion || "unknown",
-      });
-    }
-
-    // If version is OK, they must use submit-proof instead
-    return res.status(403).json({
+    // Version is OK but this old endpoint no longer processes rewards.
+    // Return 410 Gone — NOT updateRequired, so the app won't show "update" prompt.
+    return res.status(410).json({
       success:        false,
-      updateRequired: true,
-      message:        "Please update your app to the latest version to complete tasks.",
+      updateRequired: false,
+      deprecated:     true,
+      message:        "This endpoint is no longer active. Please use the new task submission flow.",
     });
 
   } catch (err) {
