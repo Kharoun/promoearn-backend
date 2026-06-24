@@ -2,7 +2,7 @@ const { getDb }  = require("../config/firebase");
 const { Resend }  = require("resend");
 const resend      = new Resend(process.env.RESEND_API_KEY);
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────────────
 
 /**
  * If imageUrl is a base64 data URL (uploaded file), extract the binary content

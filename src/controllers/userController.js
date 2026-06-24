@@ -27,84 +27,43 @@ exports.completeTask = async (req, res) => {
     const db  = getDb();
     const uid = req.user.uid;
 
-    // Check task exists
-    const taskDoc = await db.collection("tasks").doc(id).get();
-    if (!taskDoc.exists) {
-      return res.status(404).json({ success: false, message: "Task not found." });
+    // ── Version check — block old app versions ──────────────────────────────
+    const appVersion = req.headers["x-app-version"];
+    const MIN_VERSION = "1.1.0"; // your new version with timer + screenshot
+
+    const compareVersions = (current, required) => {
+      if (!current) return -1;
+      const curr = current.split(".").map(Number);
+      const req  = required.split(".").map(Number);
+      for (let i = 0; i < 3; i++) {
+        if ((curr[i] || 0) > (req[i] || 0)) return 1;
+        if ((curr[i] || 0) < (req[i] || 0)) return -1;
+      }
+      return 0;
+    };
+
+    if (compareVersions(appVersion, MIN_VERSION) < 0) {
+      return res.status(426).json({
+        success:         false,
+        updateRequired:  true,
+        message:         "Please update your app to the latest version to complete tasks.",
+        requiredVersion: MIN_VERSION,
+        currentVersion:  appVersion || "unknown",
+      });
     }
 
-    const task = taskDoc.data();
-
-    // Check if already completed by user
-    const completedSnap = await db.collection("completedTasks")
-      .where("userId", "==", uid)
-      .where("taskId", "==", id)
-      .get();
-
-    if (!completedSnap.empty) {
-      return res.status(400).json({ success: false, message: "You have already completed this task." });
-    }
-
-    // Check slots
-    if (task.slots > 0 && task.filled >= task.slots) {
-      return res.status(400).json({ success: false, message: "This task is full." });
-    }
-
-    const reward = parseFloat(task.reward) || 0.17;
-
-    // Get user
-    const userDoc = await db.collection("users").doc(uid).get();
-    const user    = userDoc.data();
-
-    // Update user balance
-    await db.collection("users").doc(uid).update({
-      balance:        (user.balance        || 0) + reward,
-      totalEarned:    (user.totalEarned    || 0) + reward,
-      tasksCompleted: (user.tasksCompleted || 0) + 1,
-      updatedAt:      new Date(),
+    // If version is OK, they must use submit-proof instead
+    return res.status(403).json({
+      success:        false,
+      updateRequired: true,
+      message:        "Please update your app to the latest version to complete tasks.",
     });
 
-    await createNotification(uid, {
-      title: "✅ Task Completed!",
-      body:  `You earned $${reward.toFixed(2)} for completing "${task.title}"`,
-      type:  "taskAlerts",
-    });
-    
-    // Mark task as completed
-    await db.collection("completedTasks").add({
-      userId:      uid,
-      taskId:      id,
-      taskTitle:   task.title,
-      reward,
-      completedAt: new Date(),
-    });
-
-    // Update task filled count
-    await db.collection("tasks").doc(id).update({
-      filled: (task.filled || 0) + 1,
-    });
-
-    // Log transaction
-    await db.collection("transactions").add({
-      userId:      uid,
-      type:        "earn",
-      description: `Task: ${task.title}`,
-      amount:      reward,
-      status:      "completed",
-      createdAt:   new Date(),
-    });
-
-    return res.status(200).json({
-      success: true,
-      message: `Task completed! +$${reward.toFixed(2)} added to your balance.`,
-      data: { reward, newBalance: (user.balance || 0) + reward },
-    });
   } catch (err) {
     console.error("Complete task error:", err);
     return res.status(500).json({ success: false, message: "Failed to complete task." });
   }
 };
-
 // ─── GET MY REFERRALS ─────────────────────────────────────────────────────────
 exports.getMyReferrals = async (req, res) => {
   try {
