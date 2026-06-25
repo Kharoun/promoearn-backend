@@ -60,7 +60,7 @@ app.options("*", cors());
         return callback(new Error("Not allowed by CORS"));
       },
       methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-      allowedHeaders: ["Content-Type", "Authorization"],
+      allowedHeaders: ["Content-Type", "Authorization", "x-app-version"],
       credentials: true,
     })
   );
