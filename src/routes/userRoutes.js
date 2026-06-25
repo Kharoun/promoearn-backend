@@ -1,6 +1,6 @@
 const express  = require("express");
 const router   = express.Router();
-const { requireMinVersion } = require("../controllers/userController");
+// const { requireMinVersion } = require("../controllers/userController");
 const { protect } = require("../middleware/authMiddleware");
 const {
   getTasks,
@@ -27,7 +27,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 
 
 router.post("/:id/submit-proof", protect, upload.single("proof"), async (req, res) => {
   try {
-    if (!requireMinVersion(req, res)) return;   // ← ADD THIS
+    // if (!requireMinVersion(req, res)) return;   // ← ADD THIS
     const db     = require("firebase-admin").firestore();
     const admin  = require("firebase-admin");
     const taskId = req.params.id;

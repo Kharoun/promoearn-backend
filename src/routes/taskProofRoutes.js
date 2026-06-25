@@ -1,14 +1,14 @@
 const express          = require("express");
 const { getDb }        = require("../config/firebase");
 const { protect }      = require("../middleware/authMiddleware");
-const { requireMinVersion } = require("../controllers/userController");
+
 
 const router = express.Router();
 
 // POST /api/v1/tasks/:id/submit-proof
 router.post("/:id/submit-proof", protect, async (req, res) => {
   try {
-    if (!requireMinVersion(req, res)) return;
+    
     const taskId                     = req.params.id;
     const userId                     = req.user.uid;
     const { base64Image, taskTitle } = req.body;
