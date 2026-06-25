@@ -37,6 +37,7 @@ const compareVersions = (current, required) => {
 
 const requireMinVersion = (req, res) => {
   const appVersion = req.headers["x-app-version"];
+  console.log(">>> x-app-version received:", appVersion);  // ← ADD THIS
   if (compareVersions(appVersion, MIN_VERSION) < 0) {
     res.status(426).json({
       success:         false,
