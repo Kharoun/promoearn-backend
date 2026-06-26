@@ -7,15 +7,20 @@ exports.getTasks = async (req, res) => {
     const db  = getDb();
     const uid = req.user.uid;
 
-    const [tasksSnap, submissionsSnap] = await Promise.all([
+    const [tasksSnap, submissionsSnap, rejectedSnap] = await Promise.all([
       db.collection("tasks").where("status", "==", "active").get(),
       db.collection("taskSubmissions")
         .where("userId", "==", uid)
         .where("status", "in", ["pending", "approved"])
         .get(),
+      db.collection("taskSubmissions")
+        .where("userId", "==", uid)
+        .where("status", "==", "rejected")
+        .get(),
     ]);
 
     const completedTaskIds = submissionsSnap.docs.map(doc => doc.data().taskId);
+    const rejectedTaskIds  = rejectedSnap.docs.map(doc => doc.data().taskId);
 
     const tasks = tasksSnap.docs
       .map(doc => ({ id: doc.id, ...doc.data() }))

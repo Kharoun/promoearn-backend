@@ -47,22 +47,42 @@ exports.broadcastPushNotification = async (req, res) => {
       });
     }
 
-    let sent = 0, failed = 0;
-    const BATCH = 20;
+// FIXED — push loop stays the same, add the in-app notification writes after
+let sent = 0, failed = 0;
+const BATCH = 20;
 
-    for (let i = 0; i < users.length; i += BATCH) {
-      const batch = users.slice(i, i + BATCH);
-      const results = await Promise.allSettled(batch.map(u => sendExpoPush(u.pushToken, title, body, data)));
-      results.forEach(r => { if (r.status === "fulfilled" && r.value.ok) sent++; else failed++; });
-      if (i + BATCH < users.length) await new Promise(r => setTimeout(r, 200));
-    }
+for (let i = 0; i < users.length; i += BATCH) {
+  const chunk = users.slice(i, i + BATCH);
+  const results = await Promise.allSettled(chunk.map(u => sendExpoPush(u.pushToken, title, body, data)));
+  results.forEach(r => { if (r.status === "fulfilled" && r.value.ok) sent++; else failed++; });
+  if (i + BATCH < users.length) await new Promise(r => setTimeout(r, 200));
+}
 
-    await db.collection("adminPushNotifications").add({
-      mode: "broadcast", title, body, data,
-      recipientCount: users.length, sent, failed,
-      sentBy: req.user?.uid || "admin", sentAt: new Date(),
+// ── Write to every user's in-app notifications (500-doc Firestore batch limit) ──
+const allUsers = snap.docs.map(d => ({ uid: d.id, ...d.data() })); // all users, not just token holders
+const FBATCH = 400;
+for (let i = 0; i < allUsers.length; i += FBATCH) {
+  const fbatch = db.batch();
+  allUsers.slice(i, i + FBATCH).forEach(u => {
+    const ref = db.collection("notifications").doc();
+    fbatch.set(ref, {
+      userId:    u.uid,
+      title,
+      body,
+      type:      "promoAlerts",
+      data,
+      read:      false,
+      createdAt: new Date(),
     });
+  });
+  await fbatch.commit();
+}
 
+await db.collection("adminPushNotifications").add({
+  mode: "broadcast", title, body, data,
+  recipientCount: users.length, sent, failed,
+  sentBy: req.user?.uid || "admin", sentAt: new Date(),
+});
     return res.status(200).json({
       success: sent > 0,
       message: sent > 0
@@ -97,16 +117,28 @@ exports.sendSinglePushNotification = async (req, res) => {
       });
     }
 
-    const { ok, error } = await sendExpoPush(user.pushToken, title, body, data);
+// FIXED
+const { ok, error } = await sendExpoPush(user.pushToken, title, body, data);
 
-    await db.collection("adminPushNotifications").add({
-      mode: "single", title, body, data, userId,
-      username: user.username || null,
-      recipientEmail: user.email || null,
-      sent: ok ? 1 : 0, failed: ok ? 0 : 1,
-      expoError: error || null,
-      sentBy: req.user?.uid || "admin", sentAt: new Date(),
-    });
+// Always write to in-app notifications regardless of push delivery outcome
+await db.collection("notifications").add({
+  userId,
+  title,
+  body,
+  type:      "promoAlerts",
+  data,
+  read:      false,
+  createdAt: new Date(),
+});
+
+await db.collection("adminPushNotifications").add({
+  mode: "single", title, body, data, userId,
+  username: user.username || null,
+  recipientEmail: user.email || null,
+  sent: ok ? 1 : 0, failed: ok ? 0 : 1,
+  expoError: error || null,
+  sentBy: req.user?.uid || "admin", sentAt: new Date(),
+});
 
     if (!ok) {
       return res.status(200).json({
