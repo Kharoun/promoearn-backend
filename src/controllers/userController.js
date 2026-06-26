@@ -4,16 +4,27 @@ const { getDb } = require("../config/firebase");
 // ─── GET PUBLIC TASKS ─────────────────────────────────────────────────────────
 exports.getTasks = async (req, res) => {
   try {
-    const db = getDb();
-    const snap = await db.collection("tasks")
-      .where("status", "==", "active")
-      .get();
+    const db  = getDb();
+    const uid = req.user.uid;
 
-    const tasks = snap.docs
+    const [tasksSnap, submissionsSnap] = await Promise.all([
+      db.collection("tasks").where("status", "==", "active").get(),
+      db.collection("taskSubmissions")
+        .where("userId", "==", uid)
+        .where("status", "in", ["pending", "approved"])
+        .get(),
+    ]);
+
+    const completedTaskIds = submissionsSnap.docs.map(doc => doc.data().taskId);
+
+    const tasks = tasksSnap.docs
       .map(doc => ({ id: doc.id, ...doc.data() }))
       .sort((a, b) => b.createdAt?._seconds - a.createdAt?._seconds);
 
-    return res.status(200).json({ success: true, data: { tasks } });
+    return res.status(200).json({
+      success: true,
+      data: { tasks, completedTaskIds },
+    });
   } catch (err) {
     console.error("Get tasks error:", err);
     return res.status(500).json({ success: false, message: "Failed to fetch tasks." });
