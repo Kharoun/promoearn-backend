@@ -2,16 +2,14 @@ const express = require("express");
 const { Resend } = require('resend');
 const resend = new Resend(process.env.RESEND_API_KEY);
 const router  = express.Router();
-// const axios   = require("axios");
 const admin   = require("firebase-admin");
 
 const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY;
 const db = admin.firestore();
 
-// ── Built-in token verification (no external middleware needed) ────────────
+// ── Built-in token verification ────────────────────────────────────────────
 const jwt = require("jsonwebtoken");
 
-// ── Built-in token verification ────────────────────────────────────────────
 const verifyToken = (req, res, next) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -28,9 +26,41 @@ const verifyToken = (req, res, next) => {
   }
 };
 
+// ✅ Version check (same logic as userController) ────────────────────────────
+const MIN_VERSION = "1.1.0";
+
+const compareVersions = (current, required) => {
+  if (!current) return -1;
+  const curr = current.split(".").map(Number);
+  const req  = required.split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    if ((curr[i] || 0) > (req[i] || 0)) return 1;
+    if ((curr[i] || 0) < (req[i] || 0)) return -1;
+  }
+  return 0;
+};
+
+const requireMinVersion = (req, res) => {
+  const appVersion = req.headers["x-app-version"];
+  if (compareVersions(appVersion, MIN_VERSION) < 0) {
+    res.status(426).json({
+      success:         false,
+      updateRequired:  true,
+      message:         "Please update your app to the latest version to submit a campaign.",
+      requiredVersion: MIN_VERSION,
+      currentVersion:  appVersion || "unknown",
+    });
+    return false;
+  }
+  return true;
+};
+
 // POST /api/v1/campaigns/submit
 router.post("/submit", verifyToken, async (req, res) => {
   try {
+    // ✅ Version gate — blocks outdated app versions
+    if (!requireMinVersion(req, res)) return;
+
     const {
       brandName, taskType, targetCount, slots, pageLink,
       description, mediaNote, contactEmail,
@@ -40,12 +70,6 @@ router.post("/submit", verifyToken, async (req, res) => {
 
     if (!brandName || !taskType || !slots || !pageLink || !contactEmail) {
       return res.status(400).json({ success: false, message: "Missing required fields." });
-    }
-    if (parseInt(slots) < 100) {
-      return res.status(400).json({ success: false, message: "Minimum number of slots is 100." });
-    }
-    if (targetCount && parseInt(targetCount) < 100) {
-      return res.status(400).json({ success: false, message: "Minimum target count is 100." });
     }
 
     const campaignRef = db.collection("campaigns").doc();
@@ -107,39 +131,38 @@ router.post("/manual-payment", verifyToken, async (req, res) => {
       updatedAt:     admin.firestore.FieldValue.serverTimestamp(),
     });
 
-        // Notify admin by email
-        resend.emails.send({
-          from:    'PromoEarn <noreply@promoearnapp.com>',
-          to:      'contact.promoearn@gmail.com',
-          subject: '💳 New Campaign Payment Transfer — PromoEarn Admin',
-          html: `
-            <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px">
-              <div style="background:#7C3AED;padding:20px;border-radius:12px 12px 0 0;text-align:center">
-                <h2 style="color:#fff;margin:0">PromoEarn Admin</h2>
-              </div>
-              <div style="background:#fff;padding:28px;border:1px solid #E2E8F0;border-top:none;border-radius:0 0 12px 12px">
-                <p style="font-size:15px;color:#0F172A">A user has submitted a <strong>campaign bank transfer</strong>.</p>
-                <div style="background:#F5F3FF;border-radius:10px;padding:16px;margin:16px 0;font-size:14px;color:#0F172A;line-height:1.9;">
-                  <p style="margin:0 0 4px;font-weight:700;">Campaign Details:</p>
-                  <p style="margin:0;"><strong>Brand:</strong> ${campaign.brandName}</p>
-                  <p style="margin:0;"><strong>Campaign ID:</strong> ${campaignId}</p>
-                  <p style="margin:0;"><strong>Sender Name:</strong> ${senderName.trim()}</p>
-                  <p style="margin:0;"><strong>Amount:</strong> ₦${(amountNGN || 0).toLocaleString()}</p>
-                  <p style="margin:0;"><strong>Quoted Total:</strong> $${campaign.quotedTotal || 0}</p>
-                  <p style="margin:0;"><strong>Submitted:</strong> ${new Date().toLocaleString('en-NG', { timeZone: 'Africa/Lagos' })} (WAT)</p>
-                </div>
-                <div style="text-align:center;margin:24px 0;">
-                  <a href="https://promo-earn-admin.vercel.app"
-                     style="display:inline-block;background:#7C3AED;color:#fff;padding:14px 32px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;">
-                    👉 Review in Admin Panel
-                  </a>
-                </div>
-              </div>
+    resend.emails.send({
+      from:    'PromoEarn <noreply@promoearnapp.com>',
+      to:      'contact.promoearn@gmail.com',
+      subject: '💳 New Campaign Payment Transfer — PromoEarn Admin',
+      html: `
+        <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px">
+          <div style="background:#7C3AED;padding:20px;border-radius:12px 12px 0 0;text-align:center">
+            <h2 style="color:#fff;margin:0">PromoEarn Admin</h2>
+          </div>
+          <div style="background:#fff;padding:28px;border:1px solid #E2E8F0;border-top:none;border-radius:0 0 12px 12px">
+            <p style="font-size:15px;color:#0F172A">A user has submitted a <strong>campaign bank transfer</strong>.</p>
+            <div style="background:#F5F3FF;border-radius:10px;padding:16px;margin:16px 0;font-size:14px;color:#0F172A;line-height:1.9;">
+              <p style="margin:0 0 4px;font-weight:700;">Campaign Details:</p>
+              <p style="margin:0;"><strong>Brand:</strong> ${campaign.brandName}</p>
+              <p style="margin:0;"><strong>Campaign ID:</strong> ${campaignId}</p>
+              <p style="margin:0;"><strong>Sender Name:</strong> ${senderName.trim()}</p>
+              <p style="margin:0;"><strong>Amount:</strong> ₦${(amountNGN || 0).toLocaleString()}</p>
+              <p style="margin:0;"><strong>Quoted Total:</strong> $${campaign.quotedTotal || 0}</p>
+              <p style="margin:0;"><strong>Submitted:</strong> ${new Date().toLocaleString('en-NG', { timeZone: 'Africa/Lagos' })} (WAT)</p>
             </div>
-          `,
-        }).catch(err => console.error('Admin campaign payment email failed:', err));
-    
-        return res.json({ success: true, message: "Payment submission received. Your campaign will be reviewed within 1–6 hours." });
+            <div style="text-align:center;margin:24px 0;">
+              <a href="https://promo-earn-admin.vercel.app"
+                 style="display:inline-block;background:#7C3AED;color:#fff;padding:14px 32px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;">
+                👉 Review in Admin Panel
+              </a>
+            </div>
+          </div>
+        </div>
+      `,
+    }).catch(err => console.error('Admin campaign payment email failed:', err));
+
+    return res.json({ success: true, message: "Payment submission received. Your campaign will be reviewed within 1–6 hours." });
   } catch (err) {
     console.error("Campaign manual-payment error:", err);
     return res.status(500).json({ success: false, message: "Server error." });
@@ -160,8 +183,6 @@ router.get(["/campaigns", "/"], verifyToken, async (req, res) => {
   }
 });
 
-
-
 // GET /api/v1/campaigns/my
 router.get("/my", verifyToken, async (req, res) => {
   try {
@@ -170,20 +191,18 @@ router.get("/my", verifyToken, async (req, res) => {
       return res.status(401).json({ success: false, message: "Cannot identify user from token." });
     }
     const snapshot = await db.collection("campaigns")
-    .where("submittedBy", "==", userId)
-    .get();
-  
-  const campaigns = snapshot.docs
-    .map(doc => ({ id: doc.id, ...doc.data() }))
-    .sort((a, b) => {
-      const aTime = a.createdAt?._seconds ?? 0;
-      const bTime = b.createdAt?._seconds ?? 0;
-      return bTime - aTime;
-    });
-    return res.json({ success: true, data: { campaigns } });  // ADD THIS LINE
+      .where("submittedBy", "==", userId)
+      .get();
+
+    const campaigns = snapshot.docs
+      .map(doc => ({ id: doc.id, ...doc.data() }))
+      .sort((a, b) => {
+        const aTime = a.createdAt?._seconds ?? 0;
+        const bTime = b.createdAt?._seconds ?? 0;
+        return bTime - aTime;
+      });
+    return res.json({ success: true, data: { campaigns } });
   } catch (err) {
-
-
     console.error("My campaigns error:", err);
     return res.status(500).json({ success: false, message: "Server error." });
   }
