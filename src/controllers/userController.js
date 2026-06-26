@@ -26,10 +26,10 @@ exports.getTasks = async (req, res) => {
       .map(doc => ({ id: doc.id, ...doc.data() }))
       .sort((a, b) => b.createdAt?._seconds - a.createdAt?._seconds);
 
-    return res.status(200).json({
-      success: true,
-      data: { tasks, completedTaskIds },
-    });
+      return res.status(200).json({
+        success: true,
+        data: { tasks, completedTaskIds, rejectedTaskIds },  // ← ADD rejectedTaskIds
+      });
   } catch (err) {
     console.error("Get tasks error:", err);
     return res.status(500).json({ success: false, message: "Failed to fetch tasks." });
