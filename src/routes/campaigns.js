@@ -27,7 +27,7 @@ const verifyToken = (req, res, next) => {
 };
 
 // ✅ Version check (same logic as userController) ────────────────────────────
-const MIN_VERSION = "1.1.0";
+const MIN_VERSION = "1.2.0";
 
 const compareVersions = (current, required) => {
   if (!current) return -1;
