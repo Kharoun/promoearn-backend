@@ -38,7 +38,7 @@ exports.getTasks = async (req, res) => {
 
 // ─── COMPLETE TASK ────────────────────────────────────────────────────────────
 // ─── SHARED VERSION CHECK HELPER ─────────────────────────────────────────────
-const MIN_VERSION = "1.1.0";
+const MIN_VERSION = "1.3.0";
 
 const compareVersions = (current, required) => {
   if (!current) return -1;
