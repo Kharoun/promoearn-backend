@@ -578,8 +578,44 @@ exports.getTaskSubmissions = async (req, res) => {
     if (status !== "all") query = query.where("status", "==", status);
 
     const snap = await query.get();
+
+    // Get unique userIds to fetch in batch
+    const userIds = [...new Set(snap.docs.map(doc => doc.data().userId).filter(Boolean))];
+
+    // Fetch all users in parallel
+    const userDocs = await Promise.all(
+      userIds.map(uid => db.collection("users").doc(uid).get())
+    );
+    const usersMap = {};
+    userDocs.forEach(doc => {
+      if (doc.exists) usersMap[doc.id] = doc.data();
+    });
+
     const submissions = snap.docs
-      .map(doc => ({ id: doc.id, ...doc.data() }))
+      .map(doc => {
+        const data = doc.data();
+        const user = usersMap[data.userId] || {};
+
+        return {
+          id:          doc.id,
+          userId:      data.userId,
+          taskId:      data.taskId,
+          taskTitle:   data.taskTitle,
+          taskReward:  data.taskReward,
+          status:      data.status,
+          note:        data.note      || "",
+          submittedAt: data.submittedAt,
+          approvedAt:  data.approvedAt  || null,
+          rejectedAt:  data.rejectedAt  || null,
+          // User info enriched here
+          displayName: `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.username || "Unknown",
+          username:    user.username  || "unknown",
+          email:       user.email     || "—",
+          // Send base64 only if pending — approved/rejected don't need the image anymore
+          proofBase64: data.status === "pending" ? (data.proofBase64 || null) : null,
+          proofUrl:    data.proofUrl || null,
+        };
+      })
       .sort((a, b) => (b.submittedAt?._seconds || 0) - (a.submittedAt?._seconds || 0));
 
     return res.json({ success: true, data: { submissions } });
