@@ -29,8 +29,8 @@ async function checkInactiveUsers() {
 
       const daysSince = Math.floor((now - lastLogin) / (1000 * 60 * 60 * 24));
 
-      // At 5 days: warn + ban
-      if (daysSince >= 5 && !user.bannedReason) {
+      // At 10 days: warn + ban
+      if (daysSince >= 10 && !user.bannedReason) {
         await banAndNotifyUser(db, user, uid);
       }
     }
@@ -47,7 +47,7 @@ async function banAndNotifyUser(db, user, uid) {
   if (!email) return;
 
   // Prevent duplicate bans
-  if (user.bannedReason === 'inactivity_5days') return;
+  if (user.bannedReason === 'inactivity_10days') return;
 
   const crypto    = require('crypto');
   const token     = crypto.randomBytes(32).toString('hex');
@@ -64,7 +64,7 @@ async function banAndNotifyUser(db, user, uid) {
     await db.collection('users').doc(uid).update({
       isBanned:                true,
       bannedAt:                new Date(),
-      bannedReason:            'inactivity_5days',
+      bannedReason:            'inactivity_10days',
       inactivityWarningSent:   true,
       reactivationToken:       tokenHash,
       reactivationTokenExpiry: expiry,
@@ -103,7 +103,7 @@ function buildBanEmail(firstName, reactivationLink) {
       <div style="background:#fff;padding:28px;border:1px solid #E2E8F0;border-top:none;border-radius:0 0 12px 12px">
         <p style="font-size:15px;color:#0F172A">Hi <strong>${firstName}</strong>,</p>
         <p style="font-size:15px;line-height:1.7;color:#0F172A">
-          Your PromoEarn account has been <strong>automatically suspended</strong> due to 5 days of inactivity.
+          Your PromoEarn account has been <strong>automatically suspended</strong> due to 10 days of inactivity.
         </p>
         <div style="background:#FEF2F2;border-left:4px solid #EF4444;padding:14px;border-radius:0 8px 8px 0;margin:20px 0">
           <p style="margin:0;color:#991B1B;font-weight:600;">🚫 Your account is now suspended.</p>
