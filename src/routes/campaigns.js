@@ -2,6 +2,7 @@ const express = require("express");
 const { Resend } = require('resend');
 const resend = new Resend(process.env.RESEND_API_KEY);
 const router  = express.Router();
+const { getDb } = require('../config/firebase');
 const admin   = require("firebase-admin");
 
 const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY;
@@ -27,39 +28,14 @@ const verifyToken = (req, res, next) => {
 };
 
 // ✅ Version check (same logic as userController) ────────────────────────────
-const MIN_VERSION = "1.4.0";
-
-const compareVersions = (current, required) => {
-  if (!current) return -1;
-  const curr = current.split(".").map(Number);
-  const req  = required.split(".").map(Number);
-  for (let i = 0; i < 3; i++) {
-    if ((curr[i] || 0) > (req[i] || 0)) return 1;
-    if ((curr[i] || 0) < (req[i] || 0)) return -1;
-  }
-  return 0;
-};
-
-const requireMinVersion = (req, res) => {
-  const appVersion = req.headers["x-app-version"];
-  if (compareVersions(appVersion, MIN_VERSION) < 0) {
-    res.status(426).json({
-      success:         false,
-      updateRequired:  true,
-      message:         "Please update your app to the latest version to submit a campaign.",
-      requiredVersion: MIN_VERSION,
-      currentVersion:  appVersion || "unknown",
-    });
-    return false;
-  }
-  return true;
-};
+const { checkVersionGate } = require("../utils/versionCheck"); // adjust path to wherever versionCheck.js actually lives
 
 // POST /api/v1/campaigns/submit
 router.post("/submit", verifyToken, async (req, res) => {
   try {
     // ✅ Version gate — blocks outdated app versions
-    if (!requireMinVersion(req, res)) return;
+    const gateResult = await checkVersionGate(req, getDb);
+    if (gateResult) return res.status(gateResult.status).json(gateResult.body);
 
     const {
       brandName, taskType, targetCount, slots, pageLink,
