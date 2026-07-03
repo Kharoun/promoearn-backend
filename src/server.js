@@ -27,43 +27,37 @@ const allowedOrigins = process.env.CORS_ORIGINS
       "https://app.promoearnapp.com",
     ];
 
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      // Allow no-origin requests (mobile apps, Postman, curl)
-      if (!origin) return callback(null, true);
-      // Allow Vercel preview URLs
-      if (/^https:\/\/.*promo-earn.*\.vercel\.app$/.test(origin)) return callback(null, true);
-      // Allow matched origins
-      if (allowedOrigins.includes(origin)) return callback(null, true);
-      // Log what's being blocked to help debug
-      console.warn("CORS blocked origin:", origin);
-      return callback(null, false); // ← return false instead of throwing an Error
-    },
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "x-app-version"],
-    credentials: true,
-  })
-);
+    app.use(
+      cors({
+        origin: (origin, callback) => {
+          if (!origin) return callback(null, true);
+          if (/^https:\/\/.*promo-earn.*\.vercel\.app$/.test(origin)) return callback(null, true);
+          if (allowedOrigins.includes(origin)) return callback(null, true);
+          return callback(new Error("Not allowed by CORS"));
+        },
+        methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allowedHeaders: ["Content-Type", "Authorization", "x-app-version", "x-platform"], // ← add x-platform
+        credentials: true,
+      })
+    );
 
 // Handle preflight for all routes
 app.options("*", cors());
 
-  app.use(
-    cors({
-      origin: (origin, callback) => {
-        // Allow requests with no origin (mobile apps, curl, Postman)
-        if (!origin) return callback(null, true);
-        // Allow all Vercel preview URLs for your project
-        if (/^https:\/\/.*promo-earn.*\.vercel\.app$/.test(origin)) return callback(null, true);
-        if (allowedOrigins.includes(origin)) return callback(null, true);
-        return callback(new Error("Not allowed by CORS"));
-      },
-      methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-      allowedHeaders: ["Content-Type", "Authorization", "x-app-version"],
-      credentials: true,
-    })
-  );
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      if (/^https:\/\/.*promo-earn.*\.vercel\.app$/.test(origin)) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      console.warn("CORS blocked origin:", origin);
+      return callback(null, false);
+    },
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "x-app-version", "x-platform"], // ← add x-platform
+    credentials: true,
+  })
+);
 // Security headers
 app.use(helmet({
   crossOriginResourcePolicy: false,
