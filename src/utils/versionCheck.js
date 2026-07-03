@@ -9,7 +9,9 @@ const compareVersions = (a, b) => {
     return 0;
   };
   
-  const checkVersionGate = async (req, getDb) => {
+// versionCheck.js
+const checkVersionGate = async (req, getDb) => {
+    if (req.headers["x-platform"] === "web") return null; // never gate web
     const clientVersion = req.headers["x-app-version"];
     const db = getDb();
     const versionDoc = await db.collection("config").doc("appVersion").get();
