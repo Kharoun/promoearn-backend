@@ -6,19 +6,9 @@ const { buildAuthTokens, verifyRefreshToken, signAccessToken } = require("../uti
 const { storeOtp, verifyOtp } = require("../utils/otpUtils");
 const { sendVerificationEmail, sendPasswordResetEmail } = require("../services/emailService");
 const { sendPhoneOtp, verifyPhoneOtp } = require("../services/smsService");
-
+const { checkVersionGate } = require("../utils/versionCheck");
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-// ─── Version Gate Helper ──────────────────────────────────────────────────
-const compareVersions = (a, b) => {
-  const pa = String(a || "0").split(".").map(Number);
-  const pb = String(b || "0").split(".").map(Number);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const na = pa[i] || 0, nb = pb[i] || 0;
-    if (na > nb) return 1;
-    if (na < nb) return -1;
-  }
-  return 0;
-};
+
 
 
 const detectIdentifierType = (identifier) => {
@@ -264,27 +254,11 @@ exports.resendOtp = async (req, res) => {
 
 exports.login = async (req, res) => {
   try {
+    const gate = await checkVersionGate(req, getDb);
+    if (gate) return res.status(gate.status).json(gate.body);
+
     const { identifier, password } = req.body;
-
-    // ── Version gate ────────────────────────────────────────────────────
-    const clientVersion = req.headers["x-app-version"];
-    const db = getDb();
-    const versionDoc = await db.collection("config").doc("appVersion").get();
-
-    if (versionDoc.exists) {
-      const { minVersion, updateUrl } = versionDoc.data();
-      if (minVersion && compareVersions(clientVersion, minVersion) < 0) {
-        return res.status(426).json({
-          success: false,
-          message: "A new version of PromoEarn is required to continue. Please update from the Play Store.",
-          code: "UPDATE_REQUIRED",
-          data: { updateUrl: updateUrl || "https://play.google.com/store/apps/details?id=com.promoearn.app" },
-        });
-      }
-    }
-
     const type = detectIdentifierType(identifier.trim());
-    // ...rest of your existing login logic continues unchanged
     if (!type) {
       return res.status(400).json({ success: false, message: "Enter a valid email address or phone number." });
     }
@@ -307,10 +281,12 @@ exports.login = async (req, res) => {
       return res.status(401).json({ success: false, message: "Invalid credentials. Please check and try again." });
     }
 
+    const db = getDb();
     await db.collection("users").doc(user.uid).update({
       lastLoginAt:           new Date(),
       inactivityWarningSent: false,
     });
+    // ...rest unchanged (tokens, warnings, response)
 
     const tokens = buildAuthTokens(user);
 

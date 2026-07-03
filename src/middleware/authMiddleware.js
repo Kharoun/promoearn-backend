@@ -1,11 +1,12 @@
 const { verifyAccessToken } = require("../utils/jwtUtils");
 const { getDb } = require("../config/firebase");
+const { checkVersionGate } = require("../utils/versionCheck");   // ← ADD
 
-/**
- * Protect routes: validates JWT and attaches user to req.user.
- */
 const protect = async (req, res, next) => {
   try {
+    const gate = await checkVersionGate(req, getDb);              // ← ADD
+    if (gate) return res.status(gate.status).json(gate.body);     // ← ADD
+
     const authHeader = req.headers.authorization;
 
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
@@ -14,6 +15,7 @@ const protect = async (req, res, next) => {
         message: "Access denied. No token provided.",
       });
     }
+    // ...everything else stays exactly the same
 
     const token = authHeader.split(" ")[1];
     const decoded = verifyAccessToken(token);

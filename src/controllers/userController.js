@@ -38,55 +38,15 @@ exports.getTasks = async (req, res) => {
 
 // ─── COMPLETE TASK ────────────────────────────────────────────────────────────
 // ─── SHARED VERSION CHECK HELPER ─────────────────────────────────────────────
-const MIN_VERSION = "1.3.0";
 
-const compareVersions = (current, required) => {
-  if (!current) return -1;
-  const curr = current.split(".").map(Number);
-  const req  = required.split(".").map(Number);
-  for (let i = 0; i < 3; i++) {
-    if ((curr[i] || 0) > (req[i] || 0)) return 1;
-    if ((curr[i] || 0) < (req[i] || 0)) return -1;
-  }
-  return 0;
-};
-
-const requireMinVersion = (req, res) => {
-  const appVersion = req.headers["x-app-version"];
-  console.log(">>> x-app-version received:", appVersion);  // ← ADD THIS
-  if (compareVersions(appVersion, MIN_VERSION) < 0) {
-    res.status(426).json({
-      success:         false,
-      updateRequired:  true,
-      message:         "Please update your app to the latest version to complete tasks.",
-      requiredVersion: MIN_VERSION,
-      currentVersion:  appVersion || "unknown",
-    });
-    return false;
-  }
-  return true;
-};
-
-exports.requireMinVersion = requireMinVersion;
 
 // ─── COMPLETE TASK (old endpoint — now fully blocked) ─────────────────────────
 exports.completeTask = async (req, res) => {
-  try {
-    if (!requireMinVersion(req, res)) return;
-
-    // Version is OK but this old endpoint no longer processes rewards.
-    // Return 410 Gone — NOT updateRequired, so the app won't show "update" prompt.
-    return res.status(410).json({
-      success:        false,
-      updateRequired: false,
-      deprecated:     true,
-      message:        "This endpoint is no longer active. Please use the new task submission flow.",
-    });
-
-  } catch (err) {
-    console.error("Complete task error:", err);
-    return res.status(500).json({ success: false, message: "Failed to complete task." });
-  }
+  return res.status(410).json({
+    success: false,
+    deprecated: true,
+    message: "This endpoint is no longer active. Please use the new task submission flow.",
+  });
 };
 // ─── GET MY REFERRALS ─────────────────────────────────────────────────────────
 exports.getMyReferrals = async (req, res) => {
