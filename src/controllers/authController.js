@@ -268,6 +268,8 @@ exports.login = async (req, res) => {
       type
     );
 
+    console.log("USER FOUND:", !!user);   // ← ADD THIS
+
     if (!user) {
       return res.status(401).json({ success: false, message: "Invalid credentials. Please check and try again." });
     }
@@ -277,6 +279,9 @@ exports.login = async (req, res) => {
     }
 
     const passwordMatch = await bcrypt.compare(password, user.passwordHash);
+
+    console.log("PASSWORD MATCH:", passwordMatch);   // ← ADD THIS
+
     if (!passwordMatch) {
       return res.status(401).json({ success: false, message: "Invalid credentials. Please check and try again." });
     }
