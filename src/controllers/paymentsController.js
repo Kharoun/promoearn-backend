@@ -11,10 +11,10 @@ const REGISTRATION_FEE = 4500 / NGN_RATE;  // = $3.00
 const WELCOME_BONUS    = 0;
 const TASK_REWARD      = 0.17;
 const REFERRAL_BONUS   = 1.33;
-// const MIN_WITHDRAWAL = 5010 / NGN_RATE;  // = $3.34
-// const WITHDRAWAL_FEE = 200 / NGN_RATE;  // ₦200 = ~$0.133
-const MIN_WITHDRAWAL = 98 / NGN_RATE;  // ~₦200, just for testing
-const WITHDRAWAL_FEE = 20 / NGN_RATE;  // ₦200 = ~$0.133
+const MIN_WITHDRAWAL = 5010 / NGN_RATE;  // = $3.34
+const WITHDRAWAL_FEE = 200 / NGN_RATE;  // ₦200 = ~$0.133
+// const MIN_WITHDRAWAL = 98 / NGN_RATE;  // ~₦200, just for testing
+// const WITHDRAWAL_FEE = 20 / NGN_RATE;  // ₦200 = ~$0.133
 const PAYSTACK_SECRET  = process.env.PAYSTACK_SECRET_KEY;
 
 // ─── Helper: call Paystack API ────────────────────────────────────────────────
@@ -189,7 +189,7 @@ exports.createCheckout = async (req, res) => {
 
     const { data } = await flw.post("/payments", {
       tx_ref,
-      amount: 100,
+      amount: 4500,
       currency: "NGN",
       redirect_url: `${process.env.CLIENT_URL}/payment-success`,
       customer: { email, name: `${user.firstName || ""} ${user.lastName || ""}`.trim() || email },
@@ -266,21 +266,41 @@ const activateUserFromPayment = async (db, userId) => {
   return { ...user, balance: (user.balance || 0) + WELCOME_BONUS };
 };
 
+const reactivateUserFromPayment = async (db, userId) => {
+  const userDoc = await db.collection("users").doc(userId).get();
+  if (!userDoc.exists) throw new Error("User not found");
+  const user = { uid: userDoc.id, ...userDoc.data() };
+  if (!user.isBanned) return user;
+
+  await db.collection("users").doc(userId).update({
+    isBanned: false,
+    bannedReason: null,
+    bannedAt: null,
+    reactivationToken: null,
+    reactivationTokenExpiry: null,
+    pendingReactivationRef: null,
+    reactivatedAt: new Date(),
+    updatedAt: new Date(),
+  });
+
+  await createNotification(userId, {
+    title: "🎉 Account Reactivated!",
+    body: "Your payment was confirmed. Your account is fully restored — start earning again!",
+    type: "paymentAlerts",
+  });
+
+  return { ...user, isBanned: false };
+};
+
 const settleFlutterwaveTransaction = async (db, txData) => {
   const meta = txData.meta || {};
   if (meta.purpose === "activation" && meta.userId) {
     return { purpose: "activation", result: await activateUserFromPayment(db, meta.userId) };
   }
+  if (meta.purpose === "reactivation" && meta.userId) {
+    return { purpose: "reactivation", result: await reactivateUserFromPayment(db, meta.userId) };
+  }
   if (meta.purpose === "campaign" && meta.campaignId) {
-    const campaignRef = db.collection("campaigns").doc(meta.campaignId);
-    const campaignDoc = await campaignRef.get();
-    if (campaignDoc.exists && campaignDoc.data().paymentStatus !== "paid") {
-      await campaignRef.update({
-        paymentStatus: "paid", status: "paid_pending_review",
-        paidAt: new Date(), updatedAt: new Date(),
-      });
-    }
-    return { purpose: "campaign", campaignId: meta.campaignId };
   }
   throw new Error("Unrecognized payment purpose in Flutterwave meta");
 };
@@ -744,11 +764,85 @@ exports.validateReactivationToken = async (req, res) => {
 };
 
 exports.createReactivationCheckout = async (req, res) => {
-  return res.status(501).json({ success: false, message: "Not implemented yet." });
+  try {
+    const { token, email } = req.body;
+    const db = getDb();
+    const crypto = require('crypto');
+
+    if (!token || !email) {
+      return res.status(400).json({ success: false, message: "Invalid request." });
+    }
+
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+
+    const snap = await db.collection('users')
+      .where('email', '==', email.toLowerCase())
+      .limit(1).get();
+
+    if (snap.empty) {
+      return res.status(404).json({ success: false, message: "Account not found." });
+    }
+
+    const userDoc = snap.docs[0];
+    const user    = userDoc.data();
+    const uid     = userDoc.id;
+
+    if (user.reactivationToken !== tokenHash) {
+      return res.status(400).json({ success: false, message: "Invalid or expired link." });
+    }
+    if (!user.isBanned) {
+      return res.status(400).json({ success: false, message: "Account is already active." });
+    }
+
+    const tx_ref = `PE-REACT-${uid}-${Date.now()}`;
+
+    const { data } = await flw.post("/payments", {
+      tx_ref,
+      amount: 1000,
+      currency: "NGN",
+      redirect_url: `${process.env.CLIENT_URL}/payment-success`,
+      customer: { email: user.email, name: `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email },
+      customizations: { title: "PromoEarn Reactivation", description: "Account reactivation fee" },
+      meta: { userId: uid, purpose: "reactivation", tx_ref },
+    });
+
+    if (data.status !== "success") {
+      console.error("Flutterwave reactivation init error:", data);
+      return res.status(400).json({ success: false, message: data.message || "Failed to initialize payment." });
+    }
+
+    await db.collection('users').doc(uid).update({ pendingReactivationRef: tx_ref, updatedAt: new Date() });
+
+    return res.status(200).json({ success: true, url: data.data.link, reference: tx_ref });
+  } catch (err) {
+    console.error("Create reactivation checkout error:", err.response?.data || err.message);
+    return res.status(500).json({ success: false, message: "Failed to create payment." });
+  }
 };
 
 exports.verifyReactivation = async (req, res) => {
-  return res.status(501).json({ success: false, message: "Not implemented yet." });
+  try {
+    const { reference } = req.body;
+    const db = getDb();
+
+    const { data: verifyRes } = await flw.get(
+      `/transactions/verify_by_reference?tx_ref=${encodeURIComponent(reference)}`
+    );
+    if (verifyRes.status !== "success" || verifyRes.data.status !== "successful") {
+      return res.status(400).json({ success: false, message: "Payment not completed yet." });
+    }
+
+    const outcome = await settleFlutterwaveTransaction(db, verifyRes.data);
+
+    return res.status(200).json({
+      success: true,
+      message: "Account reactivated! 🎉",
+      data: outcome,
+    });
+  } catch (err) {
+    console.error("Verify reactivation error:", err.response?.data || err.message);
+    return res.status(500).json({ success: false, message: "Failed to verify payment." });
+  }
 };
 
 // ─── MANUAL ACTIVATION ────────────────────────────────────────────────────────
