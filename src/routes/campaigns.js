@@ -4,6 +4,7 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 const router  = express.Router();
 const { getDb } = require('../config/firebase');
 const admin   = require("firebase-admin");
+const { flw } = require("../utils/flutterwave");
 
 const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY;
 const db = admin.firestore();
@@ -33,7 +34,6 @@ const { checkVersionGate } = require("../utils/versionCheck"); // adjust path to
 // POST /api/v1/campaigns/submit
 router.post("/submit", verifyToken, async (req, res) => {
   try {
-    // ✅ Version gate — blocks outdated app versions
     const gateResult = await checkVersionGate(req, getDb);
     if (gateResult) return res.status(gateResult.status).json(gateResult.body);
 
@@ -51,8 +51,7 @@ router.post("/submit", verifyToken, async (req, res) => {
     const campaignRef = db.collection("campaigns").doc();
     await campaignRef.set({
       id:              campaignRef.id,
-      brandName,
-      taskType,
+      brandName, taskType,
       targetCount:     parseInt(targetCount) || 0,
       slots:           parseInt(slots),
       pageLink,
@@ -73,77 +72,39 @@ router.post("/submit", verifyToken, async (req, res) => {
       updatedAt:       admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    return res.json({ success: true, data: { campaignId: campaignRef.id } });
-  } catch (err) {
-    console.error("Campaign submit error:", err);
-    return res.status(500).json({ success: false, message: "Server error." });
-  }
-});
+    const HIDDEN_FEE = 0.67;
+    const NGN_RATE   = 1500;
+    const totalUSD   = (parseFloat(quotedTotal) || 0) + HIDDEN_FEE;
+    const amountNGN  = Math.round(totalUSD * NGN_RATE) + 200;
+    const tx_ref     = `PE-CAMP-${campaignRef.id}-${Date.now()}`;
 
-// POST /api/v1/campaigns/manual-payment
-router.post("/manual-payment", verifyToken, async (req, res) => {
-  try {
-    const { campaignId, senderName, amountNGN } = req.body;
-
-    if (!campaignId || !senderName?.trim()) {
-      return res.status(400).json({ success: false, message: "campaignId and senderName are required." });
-    }
-
-    const campaignDoc = await db.collection("campaigns").doc(campaignId).get();
-    if (!campaignDoc.exists) {
-      return res.status(404).json({ success: false, message: "Campaign not found." });
-    }
-
-    const campaign = campaignDoc.data();
-    if (campaign.paymentStatus === "paid") {
-      return res.json({ success: true, message: "Campaign already paid." });
-    }
-
-    await db.collection("campaigns").doc(campaignId).update({
-      status:        "pending_payment_review",
-      paymentStatus: "pending_manual",
-      senderName:    senderName.trim(),
-      amountNGN:     amountNGN || 0,
-      updatedAt:     admin.firestore.FieldValue.serverTimestamp(),
+    const { data } = await flw.post("/payments", {
+      tx_ref,
+      amount: amountNGN,
+      currency: "NGN",
+      redirect_url: `${process.env.CLIENT_URL}/payment-success`,
+      customer: { email: contactEmail, name: userDisplayName || contactEmail },
+      customizations: { title: "PromoEarn Campaign", description: `Campaign: ${brandName}` },
+      meta: { campaignId: campaignRef.id, purpose: "campaign", tx_ref },
     });
 
-    resend.emails.send({
-      from:    'PromoEarn <noreply@promoearnapp.com>',
-      to:      'contact.promoearn@gmail.com',
-      subject: '💳 New Campaign Payment Transfer — PromoEarn Admin',
-      html: `
-        <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px">
-          <div style="background:#7C3AED;padding:20px;border-radius:12px 12px 0 0;text-align:center">
-            <h2 style="color:#fff;margin:0">PromoEarn Admin</h2>
-          </div>
-          <div style="background:#fff;padding:28px;border:1px solid #E2E8F0;border-top:none;border-radius:0 0 12px 12px">
-            <p style="font-size:15px;color:#0F172A">A user has submitted a <strong>campaign bank transfer</strong>.</p>
-            <div style="background:#F5F3FF;border-radius:10px;padding:16px;margin:16px 0;font-size:14px;color:#0F172A;line-height:1.9;">
-              <p style="margin:0 0 4px;font-weight:700;">Campaign Details:</p>
-              <p style="margin:0;"><strong>Brand:</strong> ${campaign.brandName}</p>
-              <p style="margin:0;"><strong>Campaign ID:</strong> ${campaignId}</p>
-              <p style="margin:0;"><strong>Sender Name:</strong> ${senderName.trim()}</p>
-              <p style="margin:0;"><strong>Amount:</strong> ₦${(amountNGN || 0).toLocaleString()}</p>
-              <p style="margin:0;"><strong>Quoted Total:</strong> $${campaign.quotedTotal || 0}</p>
-              <p style="margin:0;"><strong>Submitted:</strong> ${new Date().toLocaleString('en-NG', { timeZone: 'Africa/Lagos' })} (WAT)</p>
-            </div>
-            <div style="text-align:center;margin:24px 0;">
-              <a href="https://promo-earn-admin.vercel.app"
-                 style="display:inline-block;background:#7C3AED;color:#fff;padding:14px 32px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;">
-                👉 Review in Admin Panel
-              </a>
-            </div>
-          </div>
-        </div>
-      `,
-    }).catch(err => console.error('Admin campaign payment email failed:', err));
+    if (data.status !== "success") {
+      console.error("Flutterwave campaign init error:", data);
+      return res.status(400).json({ success: false, message: data.message || "Failed to start payment." });
+    }
 
-    return res.json({ success: true, message: "Payment submission received. Your campaign will be reviewed within 1–6 hours." });
+    await campaignRef.update({ paymentRef: tx_ref, amountNGN });
+
+    return res.json({
+      success: true,
+      data: { campaignId: campaignRef.id, checkoutUrl: data.data.link, reference: tx_ref },
+    });
   } catch (err) {
-    console.error("Campaign manual-payment error:", err);
+    console.error("Campaign submit error:", err.response?.data || err.message);
     return res.status(500).json({ success: false, message: "Server error." });
   }
 });
+
 
 // GET /api/v1/admin/campaigns
 router.get(["/campaigns", "/"], verifyToken, async (req, res) => {

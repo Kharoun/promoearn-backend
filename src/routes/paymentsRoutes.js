@@ -14,6 +14,7 @@ const {
   createCheckout,
   verifyPayment,
   paystackWebhook,
+  flutterwaveWebhook,
   requestWithdrawal,
   getTransactions,
   getBanks,
@@ -36,6 +37,7 @@ router.post("/verify-account", protect, verifyAccount);
 // ── Webhook must be BEFORE express.json() middleware ──
 // Raw body is needed for signature verification
 router.post("/webhook", express.raw({ type:"application/json" }), paystackWebhook);
+router.post("/flw-webhook", flutterwaveWebhook);
 
 // Protected routes
 router.post("/create-checkout",  protect, createCheckout);

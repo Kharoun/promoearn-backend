@@ -2,6 +2,7 @@ const { createNotification } = require("./notificationsController");
 const { getDb } = require("../config/firebase");
 const { v4: uuidv4 } = require("uuid");
 const https = require("https");
+const { flw } = require("../utils/flutterwave");
 const { Resend } = require('resend');
 const resend = new Resend(process.env.RESEND_API_KEY);
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -42,56 +43,44 @@ const paystackRequest = (method, path, body) => {
 };
 
 // ─── GET NIGERIAN BANKS LIST ──────────────────────────────────────────────────
-// ─── GET NIGERIAN BANKS LIST (hardcoded — no Paystack API needed) ─────────────
 exports.getBanks = async (req, res) => {
-  const banks = [
-    { id: 1,  name: "Access Bank",                     code: "044" },
-    { id: 2,  name: "Citibank Nigeria",                code: "023" },
-    { id: 3,  name: "Ecobank Nigeria",                 code: "050" },
-    { id: 4,  name: "Fidelity Bank",                   code: "070" },
-    { id: 5,  name: "First Bank of Nigeria",           code: "011" },
-    { id: 6,  name: "First City Monument Bank (FCMB)", code: "214" },
-    { id: 7,  name: "Globus Bank",                     code: "00103" },
-    { id: 8,  name: "Guaranty Trust Bank (GTBank)",    code: "058" },
-    { id: 9,  name: "Heritage Bank",                   code: "030" },
-    { id: 10, name: "Jaiz Bank",                       code: "301" },
-    { id: 11, name: "Keystone Bank",                   code: "082" },
-    { id: 12, name: "Kuda Bank",                       code: "50211" },
-    { id: 13, name: "Moniepoint MFB",                  code: "50515" },
-    { id: 14, name: "OPay",                            code: "999992" },
-    { id: 15, name: "Palmpay",                         code: "999991" },
-    { id: 16, name: "Polaris Bank",                    code: "076" },
-    { id: 17, name: "Providus Bank",                   code: "101" },
-    { id: 18, name: "Stanbic IBTC Bank",               code: "221" },
-    { id: 19, name: "Standard Chartered Bank",         code: "068" },
-    { id: 20, name: "Sterling Bank",                   code: "232" },
-    { id: 21, name: "Suntrust Bank",                   code: "100" },
-    { id: 22, name: "Titan Trust Bank",                code: "102" },
-    { id: 23, name: "Union Bank of Nigeria",           code: "032" },
-    { id: 24, name: "United Bank for Africa (UBA)",    code: "033" },
-    { id: 25, name: "Unity Bank",                      code: "215" },
-    { id: 26, name: "VFD Microfinance Bank",           code: "566" },
-    { id: 27, name: "Wema Bank",                       code: "035" },
-    { id: 28, name: "Zenith Bank",                     code: "057" },
-  ].sort((a, b) => a.name.localeCompare(b.name));
-
-  return res.status(200).json({ success: true, data: { banks } });
-};
-// ─── VERIFY ACCOUNT NUMBER ────────────────────────────────────────────────────
-// ─── VERIFY ACCOUNT NUMBER (manual — Paystack disabled) ──────────────────────
-exports.verifyAccount = async (req, res) => {
-  const { accountNumber, bankCode } = req.body;
-  if (!accountNumber || !bankCode) {
-    return res.status(400).json({ success: false, message: "Account number and bank code are required." });
+  try {
+    const { data } = await flw.get("/banks/NG");
+    if (data.status !== "success") throw new Error("Bank list fetch failed");
+    const banks = data.data
+      .map(b => ({ id: b.id, name: b.name, code: b.code }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return res.status(200).json({ success: true, data: { banks } });
+  } catch (err) {
+    console.error("Get banks error:", err.response?.data || err.message);
+    return res.status(500).json({ success: false, message: "Failed to fetch banks." });
   }
-  // Return the account number as-is — admin verifies on payout
-  return res.status(200).json({
-    success: true,
-    data: {
-      accountName:   "— Verify on payout —",
-      accountNumber: accountNumber,
-    },
-  });
+};
+
+exports.verifyAccount = async (req, res) => {
+  try {
+    const { accountNumber, bankCode } = req.body;
+    if (!accountNumber || !bankCode) {
+      return res.status(400).json({ success: false, message: "Account number and bank code are required." });
+    }
+    const { data } = await flw.post("/accounts/resolve", {
+      account_number: accountNumber,
+      account_bank: bankCode,
+    });
+    if (data.status !== "success") {
+      return res.status(400).json({ success: false, message: data.message || "Could not verify account." });
+    }
+    return res.status(200).json({
+      success: true,
+      data: { accountName: data.data.account_name, accountNumber },
+    });
+  } catch (err) {
+    console.error("Verify account error:", err.response?.data || err.message);
+    return res.status(200).json({
+      success: true,
+      data: { accountName: "— Verify on payout —", accountNumber: req.body.accountNumber },
+    });
+  }
 };
 
 // ─── REQUEST WITHDRAWAL (Paystack Transfer) ───────────────────────────────────
@@ -180,7 +169,6 @@ exports.requestWithdrawal = async (req, res) => {
   }
 };
 
-// ─── INITIALIZE PAYMENT (Paystack checkout) ───────────────────────────────────
 exports.createCheckout = async (req, res) => {
   try {
     const { userId, email } = req.body;
@@ -190,61 +178,109 @@ exports.createCheckout = async (req, res) => {
     if (!userDoc.exists) {
       return res.status(404).json({ success: false, message: "User not found." });
     }
-
     const user = userDoc.data();
     if (user.isActivated) {
       return res.status(400).json({ success: false, message: "Account already activated." });
     }
 
-    const amountInKobo = 4500 * 100; // 450000 kobo = ₦4,500 (~$3)
+    const tx_ref = `PE-ACT-${userId}-${Date.now()}`;
 
-    const response = await paystackRequest("POST", "/transaction/initialize", {
-      email,
-      amount:   amountInKobo,
+    const { data } = await flw.post("/payments", {
+      tx_ref,
+      amount: 4500,
       currency: "NGN",
-      reference: `PE-${userId}-${Date.now()}`,
-
-      // ── Split payment config ──────────────────────────────
-     split: {
-  type: "percentage",
-  bearer_type: "account",
-  bearer_subaccount: "ACCT_w3z0tqg2smqk1h9",
-  subaccounts: [
-    {
-      subaccount: "ACCT_w3z0tqg2smqk1h9",
-      share: 45,
-    },
-    {
-      subaccount: "ACCT_kauokc340c1dbv7",
-      share: 45,
-    },
-  ],
-},
-      // ─────────────────────────────────────────────────────
-
-      callback_url: `${process.env.CLIENT_URL}/payment-success`,
-      metadata: {
-        userId,
-        custom_fields: [
-          { display_name: "Product",      variable_name: "product",    value: "PromoEarn Registration" },
-          { display_name: "Amount (USD)", variable_name: "amount_usd", value: `$${REGISTRATION_FEE}` },
-        ],
-      },
+      redirect_url: `${process.env.CLIENT_URL}/payment-success`,
+      customer: { email, name: `${user.firstName || ""} ${user.lastName || ""}`.trim() || email },
+      customizations: { title: "PromoEarn Activation", description: "One-time account activation fee" },
+      meta: { userId, purpose: "activation", tx_ref },
     });
 
-    if (!response.status) {
-      console.error("Paystack error:", JSON.stringify(response));
-      return res.status(400).json({ success: false, message: response.message || "Failed to initialize payment." });
+    if (data.status !== "success") {
+      console.error("Flutterwave init error:", data);
+      return res.status(400).json({ success: false, message: data.message || "Failed to initialize payment." });
     }
-    return res.status(200).json({
-      success:   true,
-      url:       response.data.authorization_url,
-      reference: response.data.reference,
-    });
+
+    await db.collection("users").doc(userId).update({ pendingActivationRef: tx_ref, updatedAt: new Date() });
+
+    return res.status(200).json({ success: true, url: data.data.link, reference: tx_ref });
   } catch (err) {
-    console.error("Create checkout error:", err);
+    console.error("Create checkout error:", err.response?.data || err.message);
     return res.status(500).json({ success: false, message: "Failed to create payment." });
   }
+};
+
+const activateUserFromPayment = async (db, userId) => {
+  const userDoc = await db.collection("users").doc(userId).get();
+  if (!userDoc.exists) throw new Error("User not found");
+  const user = { uid: userDoc.id, ...userDoc.data() };
+  if (user.isActivated) return user;
+
+  await db.collection("users").doc(userId).update({
+    isActivated: true,
+    balance: (user.balance || 0) + WELCOME_BONUS,
+    totalEarned: (user.totalEarned || 0) + WELCOME_BONUS,
+    pendingActivationRef: null,
+    updatedAt: new Date(),
+  });
+
+  await db.collection("transactions").add({
+    userId, type: "bonus", description: "Welcome bonus",
+    amount: WELCOME_BONUS, status: "completed", createdAt: new Date(),
+  });
+  await db.collection("transactions").add({
+    userId, type: "registration", description: "Registration fee (Flutterwave)",
+    amount: -REGISTRATION_FEE, status: "completed", createdAt: new Date(),
+  });
+
+  if (user.referredBy) {
+    const referrerDoc = await db.collection("users").doc(user.referredBy).get();
+    if (referrerDoc.exists) {
+      const referrer = referrerDoc.data();
+      await db.collection("users").doc(user.referredBy).update({
+        balance: (referrer.balance || 0) + REFERRAL_BONUS,
+        totalEarned: (referrer.totalEarned || 0) + REFERRAL_BONUS,
+        referralsCount: (referrer.referralsCount || 0) + 1,
+        updatedAt: new Date(),
+      });
+      await db.collection("transactions").add({
+        userId: user.referredBy, type: "referral",
+        description: `Referral bonus from @${user.username}`,
+        amount: REFERRAL_BONUS, status: "completed", createdAt: new Date(),
+      });
+      await createNotification(user.referredBy, {
+        title: "💰 Referral Bonus Earned!",
+        body: `@${user.username} just activated their account. $${REFERRAL_BONUS.toFixed(2)} has been added!`,
+        type: "referralAlerts",
+      });
+    }
+  }
+
+  await createNotification(userId, {
+    title: "🎉 Account Activated!",
+    body: `Welcome to PromoEarn! Your $${WELCOME_BONUS.toFixed(2)} welcome bonus has been added.`,
+    type: "paymentAlerts",
+  });
+
+  return { ...user, balance: (user.balance || 0) + WELCOME_BONUS };
+};
+
+const settleFlutterwaveTransaction = async (db, txData) => {
+  const meta = txData.meta || {};
+  if (meta.purpose === "activation" && meta.userId) {
+    return { purpose: "activation", result: await activateUserFromPayment(db, meta.userId) };
+  }
+  if (meta.purpose === "campaign" && meta.campaignId) {
+    const campaignRef = db.collection("campaigns").doc(meta.campaignId);
+    const campaignDoc = await campaignRef.get();
+    if (campaignDoc.exists && campaignDoc.data().paymentStatus !== "paid") {
+      await campaignRef.update({
+        paymentStatus: "paid", status: "paid_pending_review",
+        paidAt: new Date(), updatedAt: new Date(),
+      });
+    }
+    return { purpose: "campaign", campaignId: meta.campaignId };
+  }
+  throw new Error("Unrecognized payment purpose in Flutterwave meta");
 };
 // ─── VERIFY PAYMENT & ACTIVATE ACCOUNT ───────────────────────────────────────
 exports.verifyPayment = async (req, res) => {
@@ -252,104 +288,29 @@ exports.verifyPayment = async (req, res) => {
     const { reference } = req.body;
     const db = getDb();
 
-    // 1. Verify with Paystack
-    const response = await paystackRequest("GET", `/transaction/verify/${encodeURIComponent(reference)}`);
-
-    if (!response.status || response.data.status !== "success") {
-      return res.status(400).json({ success: false, message: "Payment not completed." });
+    const { data: verifyRes } = await flw.get(
+      `/transactions/verify_by_reference?tx_ref=${encodeURIComponent(reference)}`
+    );
+    if (verifyRes.status !== "success" || verifyRes.data.status !== "successful") {
+      return res.status(400).json({ success: false, message: "Payment not completed yet." });
     }
 
-    const userId = response.data.metadata?.userId;
-    if (!userId) {
-      return res.status(400).json({ success: false, message: "Invalid payment metadata." });
-    }
+    const outcome = await settleFlutterwaveTransaction(db, verifyRes.data);
 
-    // 2. Load user
-    const userDoc = await db.collection("users").doc(userId).get();
-    if (!userDoc.exists) {
-      return res.status(404).json({ success: false, message: "User not found." });
-    }
-    const user = { uid: userDoc.id, ...userDoc.data() };
-
-    // 3. Prevent double activation
-    if (user.isActivated) {
-      return res.status(200).json({ success: true, message: "Account already activated." });
-    }
-
-    // 4. Activate + welcome bonus
-    await db.collection("users").doc(userId).update({
-      isActivated: true,
-      balance:     (user.balance || 0) + WELCOME_BONUS,
-      totalEarned: (user.totalEarned || 0) + WELCOME_BONUS,
-      updatedAt:   new Date(),
-    });
-
-    // 5. Log welcome bonus
-    await db.collection("transactions").add({
-      userId,
-      type:        "bonus",
-      description: "Welcome bonus",
-      amount:      WELCOME_BONUS,
-      status:      "completed",
-      createdAt:   new Date(),
-    });
-
-    // 6. Log registration fee
-    await db.collection("transactions").add({
-      userId,
-      type:              "registration",
-      description:       "Registration fee",
-      amount:            -REGISTRATION_FEE,
-      status:            "completed",
-      paystackReference: reference,
-      createdAt:         new Date(),
-    });
-
-    // 7. Referral bonus
-    if (user.referredBy) {
-      const referrerDoc = await db.collection("users").doc(user.referredBy).get();
-      if (referrerDoc.exists) {
-        const referrer = referrerDoc.data();
-        await db.collection("users").doc(user.referredBy).update({
-          balance:        (referrer.balance       || 0) + REFERRAL_BONUS,
-          totalEarned:    (referrer.totalEarned   || 0) + REFERRAL_BONUS,
-          referralsCount: (referrer.referralsCount || 0) + 1,
-          updatedAt:      new Date(),
-        });
-        await db.collection("transactions").add({
-          userId:      user.referredBy,
-          type:        "referral",
-          description: `Referral bonus from @${user.username}`,
-          amount:      REFERRAL_BONUS,
-          status:      "completed",
-          createdAt:   new Date(),
-        });
-      }
-    }
-
-    // 8. Notifications
-    await createNotification(userId, {
-      title: "🎉 Account Activated!",
-      body:  `Welcome to PromoEarn! Your $${WELCOME_BONUS.toFixed(2)} welcome bonus has been added.`,
-      type:  "paymentAlerts",
-    });
-
-    if (user.referredBy) {
-      await createNotification(user.referredBy, {
-        title: "💰 Referral Bonus Earned!",
-        body:  `@${user.username} just activated their account. $${REFERRAL_BONUS.toFixed(2)} has been added to your balance!`,
-        type:  "referralAlerts",
+    if (outcome.purpose === "activation") {
+      return res.status(200).json({
+        success: true,
+        message: "Account activated! 🎉",
+        data: { balance: outcome.result.balance },
       });
     }
-
     return res.status(200).json({
       success: true,
-      message: "Account activated! Welcome bonus added. 🎉",
-      data:    { balance: (user.balance || 0) + WELCOME_BONUS },
+      message: "Payment confirmed. Your campaign is now in review.",
+      data: outcome,
     });
-
   } catch (err) {
-    console.error("Verify payment error:", err);
+    console.error("Verify payment error:", err.response?.data || err.message);
     return res.status(500).json({ success: false, message: "Failed to verify payment." });
   }
 };
@@ -508,6 +469,77 @@ exports.paystackWebhook = async (req, res) => {
     console.error("Webhook error:", err);
   }
 };
+
+exports.flutterwaveWebhook = async (req, res) => {
+  try {
+    const signature = req.headers["verif-hash"];
+    if (!signature || signature !== process.env.FLW_WEBHOOK_HASH) {
+      return res.status(401).send("Invalid signature");
+    }
+    res.status(200).json({ received: true });
+
+    const event = req.body;
+    const db = getDb();
+
+    if (event.event === "charge.completed" && event.data?.status === "successful") {
+      const { data: verifyRes } = await flw.get(`/transactions/${event.data.id}/verify`);
+      if (verifyRes.data?.status === "successful") {
+        try {
+          await settleFlutterwaveTransaction(db, verifyRes.data);
+          console.log("✅ FLW webhook settled charge", event.data.id);
+        } catch (e) {
+          console.error("Settle error:", e.message);
+        }
+      }
+    }
+
+    if (event.event === "transfer.completed") {
+      const txRef = event.data?.reference;
+      if (!txRef) return;
+
+      const snap = await db.collection("payments").where("transferRef", "==", txRef).limit(1).get();
+      if (snap.empty) return;
+      const paymentDoc = snap.docs[0];
+      const payment = paymentDoc.data();
+
+      if (event.data.status === "SUCCESSFUL") {
+        await paymentDoc.ref.update({ status: "completed", updatedAt: new Date() });
+        const txSnap = await db.collection("transactions").where("paymentId", "==", paymentDoc.id).limit(1).get();
+        txSnap.docs.forEach(d => d.ref.update({ status: "completed" }));
+
+        await createNotification(payment.userId, {
+          title: "💸 Withdrawal Processed!",
+          body: `Your withdrawal of $${payment.amountAfterFee?.toFixed(2)} (₦${Math.round(payment.amountNGN || 0).toLocaleString()}) to ${payment.bankName} has been sent.`,
+          type: "paymentAlerts",
+        });
+        console.log(`✅ Transfer ${txRef} completed`);
+      } else {
+        await paymentDoc.ref.update({ status: "failed", updatedAt: new Date() });
+        const userDoc = await db.collection("users").doc(payment.userId).get();
+        if (userDoc.exists) {
+          await db.collection("users").doc(payment.userId).update({
+            balance: (userDoc.data().balance || 0) + payment.amount,
+            updatedAt: new Date(),
+          });
+          await db.collection("transactions").add({
+            userId: payment.userId, type: "refund",
+            description: "Withdrawal refund — transfer failed",
+            amount: payment.amount, status: "completed", createdAt: new Date(),
+          });
+          await createNotification(payment.userId, {
+            title: "⚠️ Withdrawal Failed",
+            body: `Your withdrawal of $${payment.amount.toFixed(2)} could not be processed. It has been refunded to your balance.`,
+            type: "paymentAlerts",
+          });
+        }
+        console.log(`⚠️ Transfer ${txRef} failed — refunded`);
+      }
+    }
+  } catch (err) {
+    console.error("Flutterwave webhook error:", err.response?.data || err.message);
+  }
+};
+
 // ─── VALIDATE REACTIVATION TOKEN ─────────────────────────────────────────────
 exports.validateReactivationToken = async (req, res) => {
   try {

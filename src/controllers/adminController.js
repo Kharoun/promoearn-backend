@@ -1,4 +1,5 @@
 const { getDb } = require("../config/firebase");
+const { flw } = require("../utils/flutterwave");
 const { Resend } = require('resend');
 const { createNotification } = require('./notificationsController');
 const sanitizeUser = (uid, data) => {
@@ -221,31 +222,48 @@ exports.processPayment = async (req, res) => {
     }
 
     if (action === "approve") {
-      // Mark as approved — admin already sent the money manually via bank app
-      await db.collection("payments").doc(id).update({
-        status:     "approved",
-        approvedAt: new Date(),
-        updatedAt:  new Date(),
-      });
+      try {
+        const txRef = `PE-WD-${id}-${Date.now()}`;
 
-      // Mark the linked transaction as completed
-      const txSnap = await db.collection("transactions")
-        .where("paymentId", "==", id).limit(1).get();
-      if (!txSnap.empty) {
-        await txSnap.docs[0].ref.update({ status: "completed" });
+        const { data: transferRes } = await flw.post("/transfers", {
+          account_bank:   payment.bankCode,
+          account_number: payment.accountNumber,
+          amount:         Math.round(payment.amountNGN || (payment.amountAfterFee * 1500)),
+          narration:      `PromoEarn withdrawal - ${payment.accountName}`,
+          currency:       "NGN",
+          reference:      txRef,
+          callback_url:   `${process.env.CLIENT_URL}/api/v1/payments/flw-webhook`,
+        });
+
+        if (transferRes.status !== "success") {
+          return res.status(400).json({
+            success: false,
+            message: transferRes.message || "Transfer failed to initiate. Balance not released.",
+          });
+        }
+
+        await db.collection("payments").doc(id).update({
+          status:        "processing",
+          transferRef:   txRef,
+          flwTransferId: transferRes.data.id,
+          approvedAt:    new Date(),
+          updatedAt:     new Date(),
+        });
+
+        const txSnap = await db.collection("transactions")
+          .where("paymentId", "==", id).limit(1).get();
+        if (!txSnap.empty) {
+          await txSnap.docs[0].ref.update({ status: "processing" });
+        }
+
+        return res.json({
+          success: true,
+          message: "Transfer initiated via Flutterwave. User will be notified automatically once it completes.",
+        });
+      } catch (err) {
+        console.error("Flutterwave transfer error:", err.response?.data || err.message);
+        return res.status(500).json({ success: false, message: "Failed to initiate transfer. Balance not released." });
       }
-
-      // Notify user
-      await db.collection("notifications").add({
-        userId:    payment.userId,
-        title:     "💸 Withdrawal Processed!",
-        body:      `Your withdrawal of $${payment.amountAfterFee?.toFixed(2)} (₦${Math.round(payment.amountNGN || 0).toLocaleString()}) to ${payment.bankName} has been sent. Check your account within 24 hours.`,
-        type:      "paymentAlerts",
-        read:      false,
-        createdAt: new Date(),
-      });
-
-      return res.json({ success: true, message: "Withdrawal approved. User has been notified." });
 
     } else if (action === "reject") {
       // Refund balance back to user
