@@ -223,46 +223,33 @@ exports.processPayment = async (req, res) => {
 
     if (action === "approve") {
       try {
-        const txRef = `PE-WD-${id}-${Date.now()}`;
-
-        const { data: transferRes } = await flw.post("/transfers", {
-          account_bank:   payment.bankCode,
-          account_number: payment.accountNumber,
-          amount:         Math.round(payment.amountNGN || (payment.amountAfterFee * 1500)),
-          narration:      `PromoEarn withdrawal - ${payment.accountName}`,
-          currency:       "NGN",
-          reference:      txRef,
-          callback_url:   `${process.env.CLIENT_URL}/api/v1/payments/flw-webhook`,
-        });
-
-        if (transferRes.status !== "success") {
-          return res.status(400).json({
-            success: false,
-            message: transferRes.message || "Transfer failed to initiate. Balance not released.",
-          });
-        }
-
+        // Manual approval — admin has already sent the money from their own bank.
+        // No Flutterwave Transfer API call, so no IP whitelisting needed.
         await db.collection("payments").doc(id).update({
-          status:        "processing",
-          transferRef:   txRef,
-          flwTransferId: transferRes.data.id,
-          approvedAt:    new Date(),
-          updatedAt:     new Date(),
+          status:     "completed",
+          approvedAt: new Date(),
+          updatedAt:  new Date(),
         });
 
         const txSnap = await db.collection("transactions")
           .where("paymentId", "==", id).limit(1).get();
         if (!txSnap.empty) {
-          await txSnap.docs[0].ref.update({ status: "processing" });
+          await txSnap.docs[0].ref.update({ status: "completed" });
         }
+
+        await createNotification(payment.userId, {
+          title: "💸 Withdrawal Processed!",
+          body:  `Your withdrawal of $${(payment.amountAfterFee || payment.amount).toFixed(2)} (₦${Math.round(payment.amountNGN || 0).toLocaleString()}) to ${payment.bankName} has been sent.`,
+          type:  "paymentAlerts",
+        });
 
         return res.json({
           success: true,
-          message: "Transfer initiated via Flutterwave. User will be notified automatically once it completes.",
+          message: "Withdrawal marked as completed. User has been notified.",
         });
       } catch (err) {
-        console.error("Flutterwave transfer error:", err.response?.data || err.message);
-        return res.status(500).json({ success: false, message: "Failed to initiate transfer. Balance not released." });
+        console.error("Manual approval error:", err);
+        return res.status(500).json({ success: false, message: "Failed to approve withdrawal." });
       }
 
     } else if (action === "reject") {
