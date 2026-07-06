@@ -11,7 +11,7 @@ const REGISTRATION_FEE = 4500 / NGN_RATE;  // = $3.00
 const WELCOME_BONUS    = 0;
 const TASK_REWARD      = 0.17;
 const REFERRAL_BONUS   = 1.33;
-const MIN_WITHDRAWAL = 5010 / NGN_RATE;  // = $3.34
+const MIN_WITHDRAWAL = 5250 / NGN_RATE;  // = $3.50
 const WITHDRAWAL_FEE = 200 / NGN_RATE;  // ₦200 = ~$0.133
 // const MIN_WITHDRAWAL = 98 / NGN_RATE;  // ~₦200, just for testing
 // const WITHDRAWAL_FEE = 20 / NGN_RATE;  // ₦200 = ~$0.133
