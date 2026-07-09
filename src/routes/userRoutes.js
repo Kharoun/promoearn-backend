@@ -7,6 +7,7 @@ const {
   completeTask,
   getMyReferrals,
   getLeaderboard,
+  getActivityHistory,
 } = require("../controllers/userController");
 
 // Public
@@ -16,6 +17,7 @@ router.get("/leaderboard", getLeaderboard);
 router.get("/tasks",            protect, getTasks);
 router.post("/tasks/:id/complete", protect, completeTask);
 router.get("/referrals/mine",   protect, getMyReferrals);
+router.get("/activity-history", protect, getActivityHistory);
 
 // Leaderboard (public)
 router.get("/leaderboard", getLeaderboard);
