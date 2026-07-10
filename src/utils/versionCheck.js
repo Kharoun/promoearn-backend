@@ -1,3 +1,14 @@
+const compareVersions = (a, b) => {
+  const pa = String(a || "0").split(".").map(Number);
+  const pb = String(b || "0").split(".").map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const na = pa[i] || 0, nb = pb[i] || 0;
+    if (na > nb) return 1;
+    if (na < nb) return -1;
+  }
+  return 0;
+};
+
 const checkVersionGate = async (req, getDb) => {
   console.log("PLATFORM HEADER:", req.headers["x-platform"]);
   if (req.headers["x-platform"] === "web") return null;
@@ -18,10 +29,10 @@ const checkVersionGate = async (req, getDb) => {
   }
 
   const cmp = compareVersions(clientVersion, minVersion);
-  console.log(`COMPARING client="${clientVersion}" vs min="${minVersion}" → result=${cmp}`);
+  console.log(`COMPARING client="${clientVersion}" vs min="${minVersion}" -> result=${cmp}`);
 
   if (!clientVersion || cmp < 0) {
-    console.log("🚫 BLOCKING LOGIN — version too old");
+    console.log("BLOCKING LOGIN — version too old");
     return {
       status: 426,
       body: {
