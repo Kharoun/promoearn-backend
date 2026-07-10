@@ -102,9 +102,16 @@ exports.getLeaderboard = async (req, res) => {
     const db = getDb();
     const weekStart = getWeekStart();
 
+    const resetDoc = await db.collection("config").doc("leaderboard").get();
+    const resetAt = resetDoc.exists && resetDoc.data().resetAt
+      ? resetDoc.data().resetAt.toDate()
+      : null;
+
+    const cutoff = resetAt && resetAt > weekStart ? resetAt : weekStart;
+
     const [usersSnap, txSnap] = await Promise.all([
       db.collection("users").where("isActivated", "==", true).get(),
-      db.collection("transactions").where("createdAt", ">=", weekStart).get(),
+      db.collection("transactions").where("createdAt", ">=", cutoff).get(),
     ]);
 
     const weeklyTotals = {};
@@ -131,12 +138,42 @@ exports.getLeaderboard = async (req, res) => {
       .slice(0, 15)
       .map((u, i) => ({ ...u, rank: i + 1 }));
 
-    return res.status(200).json({ success: true, data: { leaders, weekStart } });
+    return res.status(200).json({ success: true, data: { leaders, weekStart: cutoff } });
   } catch (err) {
     console.error("Leaderboard error:", err);
     return res.status(500).json({ success: false, message: "Failed to fetch leaderboard." });
   }
 };
+
+// ─── ADMIN: RESET LEADERBOARD NOW ─────────────────────────────────────────
+exports.resetLeaderboard = async (req, res) => {
+  try {
+    const db = getDb();
+    await db.collection("config").doc("leaderboard").set({
+      resetAt: new Date(),
+    }, { merge: true });
+
+    return res.status(200).json({ success: true, message: "Leaderboard reset. Counting starts from now." });
+  } catch (err) {
+    console.error("Reset leaderboard error:", err);
+    return res.status(500).json({ success: false, message: "Failed to reset leaderboard." });
+  }
+};
+
+// ─── ADMIN: RESET LEADERBOARD NOW ─────────────────────────────────────────
+// exports.resetLeaderboard = async (req, res) => {
+//   try {
+//     const db = getDb();
+//     await db.collection("config").doc("leaderboard").set({
+//       resetAt: new Date(),
+//     }, { merge: true });
+
+//     return res.status(200).json({ success: true, message: "Leaderboard reset. Counting starts from now." });
+//   } catch (err) {
+//     console.error("Reset leaderboard error:", err);
+//     return res.status(500).json({ success: false, message: "Failed to reset leaderboard." });
+//   }
+// };
 // ─── ACTIVITY HISTORY (tasks + transactions + campaigns + last login) ────
 exports.getActivityHistory = async (req, res) => {
   try {

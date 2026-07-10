@@ -252,69 +252,69 @@ exports.resendOtp = async (req, res) => {
 
 // ─── LOGIN ────────────────────────────────────────────────────────────────────
 
-exports.login = async (req, res) => {
-  try {
-    const gate = await checkVersionGate(req, getDb);
-    if (gate) return res.status(gate.status).json(gate.body);
+    exports.login = async (req, res) => {
+      try {
+        const gate = await checkVersionGate(req, getDb);
+        if (gate) return res.status(gate.status).json(gate.body);
 
-    const { identifier, password } = req.body;
-    const type = detectIdentifierType(identifier.trim());
-    if (!type) {
-      return res.status(400).json({ success: false, message: "Enter a valid email address or phone number." });
-    }
+        const { identifier, password } = req.body;
+        const type = detectIdentifierType(identifier.trim());
+        if (!type) {
+          return res.status(400).json({ success: false, message: "Enter a valid email address or phone number." });
+        }
 
-    const user = await findUserByIdentifier(
-      type === "email" ? identifier.toLowerCase() : identifier,
-      type
-    );
+        const user = await findUserByIdentifier(
+          type === "email" ? identifier.toLowerCase() : identifier,
+          type
+        );
 
-    console.log("USER FOUND:", !!user);   // ← ADD THIS
+        console.log("USER FOUND:", !!user);   // ← ADD THIS
 
-    if (!user) {
-      return res.status(401).json({ success: false, message: "Invalid credentials. Please check and try again." });
-    }
+        if (!user) {
+          return res.status(401).json({ success: false, message: "Invalid credentials. Please check and try again." });
+        }
 
-    if (user.isBanned) {
-      return res.status(403).json({ success: false, message: "Your account has been suspended. Contact support." });
-    }
+        if (user.isBanned) {
+          return res.status(403).json({ success: false, message: "Your account has been suspended. Contact support." });
+        }
 
-    const passwordMatch = await bcrypt.compare(password, user.passwordHash);
+        const passwordMatch = await bcrypt.compare(password, user.passwordHash);
 
-    console.log("PASSWORD MATCH:", passwordMatch);   // ← ADD THIS
+        console.log("PASSWORD MATCH:", passwordMatch);   // ← ADD THIS
 
-    if (!passwordMatch) {
-      return res.status(401).json({ success: false, message: "Invalid credentials. Please check and try again." });
-    }
+        if (!passwordMatch) {
+          return res.status(401).json({ success: false, message: "Invalid credentials. Please check and try again." });
+        }
 
-    const db = getDb();
-    await db.collection("users").doc(user.uid).update({
-      lastLoginAt:           new Date(),
-      inactivityWarningSent: false,
-    });
-    // ...rest unchanged (tokens, warnings, response)
+        const db = getDb();
+        await db.collection("users").doc(user.uid).update({
+          lastLoginAt:           new Date(),
+          inactivityWarningSent: false,
+        });
+        // ...rest unchanged (tokens, warnings, response)
 
-    const tokens = buildAuthTokens(user);
+        const tokens = buildAuthTokens(user);
 
-    const warnings = [];
-    if (!user.emailVerified) warnings.push("email");
-    if (user.phone && !user.phoneVerified) warnings.push("phone");
+        const warnings = [];
+        if (!user.emailVerified) warnings.push("email");
+        if (user.phone && !user.phoneVerified) warnings.push("phone");
 
-    return res.status(200).json({
-      success: true,
-      message: "Login successful! 🚀",
-      data: {
-        ...tokens,
-        user: sanitizeUser(user),
-        verificationWarnings: warnings.length > 0
-          ? `Please verify your ${warnings.join(" and ")}.`
-          : null,
-      },
-    });
-  } catch (err) {
-    console.error("Login error:", err);
-    return res.status(500).json({ success: false, message: "Login failed. Please try again." });
-  }
-};
+        return res.status(200).json({
+          success: true,
+          message: "Login successful! 🚀",
+          data: {
+            ...tokens,
+            user: sanitizeUser(user),
+            verificationWarnings: warnings.length > 0
+              ? `Please verify your ${warnings.join(" and ")}.`
+              : null,
+          },
+        });
+      } catch (err) {
+        console.error("Login error:", err);
+        return res.status(500).json({ success: false, message: "Login failed. Please try again." });
+      }
+    };
 
 // ─── REFRESH TOKEN ────────────────────────────────────────────────────────────
 

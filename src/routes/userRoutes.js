@@ -8,6 +8,7 @@ const {
   getMyReferrals,
   getLeaderboard,
   getActivityHistory,
+  resetLeaderboard,
 } = require("../controllers/userController");
 
 // Public
@@ -18,6 +19,12 @@ router.get("/tasks",            protect, getTasks);
 router.post("/tasks/:id/complete", protect, completeTask);
 router.get("/referrals/mine",   protect, getMyReferrals);
 router.get("/activity-history", protect, getActivityHistory);
+router.post("/leaderboard/reset", async (req, res) => {
+  if (req.headers["x-admin-key"] !== process.env.ADMIN_RESET_KEY) {
+    return res.status(403).json({ success: false, message: "Forbidden." });
+  }
+  return resetLeaderboard(req, res);
+});
 
 // Leaderboard (public)
 router.get("/leaderboard", getLeaderboard);
