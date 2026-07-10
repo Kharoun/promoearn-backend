@@ -320,6 +320,8 @@ exports.login = async (req, res) => {
 
 exports.refreshToken = async (req, res) => {
   try {
+    const gate = await checkVersionGate(req, getDb);
+    if (gate) return res.status(gate.status).json(gate.body);
     const { refreshToken } = req.body;
     if (!refreshToken) {
       return res.status(400).json({ success: false, message: "Refresh token required." });
