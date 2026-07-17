@@ -630,6 +630,132 @@ exports.getTaskSubmissions = async (req, res) => {
   }
 };
 
+// ─── GIFT CARD RATES (admin-managed) ───────────────────────────────────────
+exports.getGiftCardRates = async (req, res) => {
+  try {
+    const db = getDb();
+    const snap = await db.collection("giftCardRates").get();
+    const rates = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    return res.json({ success: true, data: { rates } });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: "Failed to fetch rates." });
+  }
+};
+
+exports.upsertGiftCardRate = async (req, res) => {
+  try {
+    const db = getDb();
+    const { id, brand, cardType, ratePercent, minFace, maxFace, active } = req.body;
+    const data = {
+      brand, cardType,
+      ratePercent: parseFloat(ratePercent),
+      minFace: parseFloat(minFace) || 0,
+      maxFace: parseFloat(maxFace) || 0,
+      active: active !== false,
+      updatedAt: new Date(),
+    };
+    if (id) {
+      await db.collection("giftCardRates").doc(id).update(data);
+    } else {
+      await db.collection("giftCardRates").add({ ...data, createdAt: new Date() });
+    }
+    return res.json({ success: true, message: "Rate saved." });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: "Failed to save rate." });
+  }
+};
+
+// ─── GIFT CARD SUBMISSIONS (admin review) ──────────────────────────────────
+exports.getGiftCardSubmissions = async (req, res) => {
+  try {
+    const db = getDb();
+    const status = req.query.status || "all";
+    let query = db.collection("giftCardSubmissions");
+    if (status !== "all") query = query.where("status", "==", status);
+    const snap = await query.get();
+    const submissions = snap.docs
+      .map(doc => ({ id: doc.id, ...doc.data() }))
+      .sort((a, b) => (b.submittedAt?._seconds || 0) - (a.submittedAt?._seconds || 0));
+    return res.json({ success: true, data: { submissions } });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: "Server error." });
+  }
+};
+
+exports.processGiftCardSubmission = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { action, note } = req.body; // action: "approve" | "reject"
+    const db = getDb();
+
+    const subDoc = await db.collection("giftCardSubmissions").doc(id).get();
+    if (!subDoc.exists) return res.status(404).json({ success: false, message: "Submission not found." });
+    const sub = subDoc.data();
+    if (sub.status !== "pending") {
+      return res.status(400).json({ success: false, message: "Already processed." });
+    }
+
+    if (action === "approve") {
+      const userDoc = await db.collection("users").doc(sub.userId).get();
+      if (!userDoc.exists) return res.status(404).json({ success: false, message: "User not found." });
+      const user = userDoc.data();
+      const amount = sub.quotedAmount;
+
+      await db.collection("users").doc(sub.userId).update({
+        balance: (user.balance || 0) + amount,
+        totalEarned: (user.totalEarned || 0) + amount,
+        updatedAt: new Date(),
+      });
+
+      await db.collection("transactions").add({
+        userId: sub.userId,
+        type: "giftcard",
+        description: `${sub.brand} gift card ($${sub.faceValue} face value)`,
+        amount,
+        status: "completed",
+        submissionId: id,
+        createdAt: new Date(),
+      });
+
+      await db.collection("giftCardSubmissions").doc(id).update({
+        status: "approved", note: note || "", approvedAt: new Date(),
+        // clear sensitive fields once processed
+        code: null, pin: null,
+      });
+
+      await db.collection("notifications").add({
+        userId: sub.userId,
+        title: "🎉 Gift Card Approved!",
+        body: `Your ${sub.brand} gift card was verified. +$${amount.toFixed(2)} added to your balance.`,
+        type: "paymentAlerts", read: false, createdAt: new Date(),
+      });
+
+      return res.json({ success: true, message: "Approved and credited." });
+
+    } else if (action === "reject") {
+      await db.collection("giftCardSubmissions").doc(id).update({
+        status: "rejected",
+        note: note || "Card could not be verified.",
+        rejectedAt: new Date(),
+        code: null, pin: null,
+      });
+
+      await db.collection("notifications").add({
+        userId: sub.userId,
+        title: "❌ Gift Card Rejected",
+        body: note || `Your ${sub.brand} gift card submission was rejected.`,
+        type: "paymentAlerts", read: false, createdAt: new Date(),
+      });
+
+      return res.json({ success: true, message: "Rejected." });
+    }
+    return res.status(400).json({ success: false, message: "Invalid action." });
+  } catch (err) {
+    console.error("processGiftCardSubmission error:", err);
+    return res.status(500).json({ success: false, message: "Server error." });
+  }
+};
+
 exports.processTaskSubmission = async (req, res) => {
   try {
     const { id }           = req.params;

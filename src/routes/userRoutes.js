@@ -8,7 +8,6 @@ const {
   getMyReferrals,
   getLeaderboard,
   getActivityHistory,
-  resetLeaderboard,
 } = require("../controllers/userController");
 
 // Public
@@ -19,16 +18,20 @@ router.get("/tasks",            protect, getTasks);
 router.post("/tasks/:id/complete", protect, completeTask);
 router.get("/referrals/mine",   protect, getMyReferrals);
 router.get("/activity-history", protect, getActivityHistory);
-router.post("/leaderboard/reset", async (req, res) => {
-  if (req.headers["x-admin-key"] !== process.env.ADMIN_RESET_KEY) {
-    return res.status(403).json({ success: false, message: "Forbidden." });
-  }
-  return resetLeaderboard(req, res);
-});
 
-// Leaderboard (public)
-router.get("/leaderboard", getLeaderboard);
 // ── your existing routes above this line ──
+const multer = require("multer");
+const giftCardUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+const {
+  getRates, submitGiftCard, getMyGiftCardSubmissions,
+} = require("../controllers/giftCardController");
+
+router.get("/giftcards/rates", protect, getRates);
+router.post("/giftcards/submit", protect,
+  giftCardUpload.fields([{ name: "front", maxCount: 1 }, { name: "back", maxCount: 1 }]),
+  submitGiftCard
+);
+router.get("/giftcards/mine", protect, getMyGiftCardSubmissions);
 
 // ── PASTE THIS ENTIRE BLOCK ──
 const multer = require("multer");

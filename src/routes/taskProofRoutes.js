@@ -5,6 +5,7 @@ const { protect }      = require("../middleware/authMiddleware");
 
 const router = express.Router();
 
+
 // POST /api/v1/tasks/:id/submit-proof
 router.post("/:id/submit-proof", protect, async (req, res) => {
   try {

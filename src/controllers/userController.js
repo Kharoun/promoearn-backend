@@ -88,39 +88,12 @@ exports.getMyReferrals = async (req, res) => {
   }
 };
 
-// ─── Helper: start of current week (Monday 00:00 UTC) ────────────────────
-const getWeekStart = () => {
-  const now = new Date();
-  const day = now.getUTCDay(); // 0=Sun..6=Sat
-  const diff = day === 0 ? 6 : day - 1;
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - diff, 0, 0, 0));
-};
-
-// ─── LEADERBOARD (resets weekly) ──────────────────────────────────────────
+// ─── LEADERBOARD (all-time top earners, no reset) ─────────────────────────
 exports.getLeaderboard = async (req, res) => {
   try {
     const db = getDb();
-    const weekStart = getWeekStart();
 
-    const resetDoc = await db.collection("config").doc("leaderboard").get();
-    const resetAt = resetDoc.exists && resetDoc.data().resetAt
-      ? resetDoc.data().resetAt.toDate()
-      : null;
-
-    const cutoff = resetAt && resetAt > weekStart ? resetAt : weekStart;
-
-    const [usersSnap, txSnap] = await Promise.all([
-      db.collection("users").where("isActivated", "==", true).get(),
-      db.collection("transactions").where("createdAt", ">=", cutoff).get(),
-    ]);
-
-    const weeklyTotals = {};
-    txSnap.docs.forEach((doc) => {
-      const d = doc.data();
-      if (d.amount > 0 && d.userId) {
-        weeklyTotals[d.userId] = (weeklyTotals[d.userId] || 0) + d.amount;
-      }
-    });
+    const usersSnap = await db.collection("users").where("isActivated", "==", true).get();
 
     const leaders = usersSnap.docs
       .map((doc) => {
@@ -130,7 +103,7 @@ exports.getLeaderboard = async (req, res) => {
           username: data.username,
           firstName: data.firstName,
           lastName: data.lastName,
-          totalEarned: weeklyTotals[doc.id] || 0,
+          totalEarned: data.totalEarned || 0,
         };
       })
       .filter((u) => u.totalEarned > 0)
@@ -138,42 +111,12 @@ exports.getLeaderboard = async (req, res) => {
       .slice(0, 15)
       .map((u, i) => ({ ...u, rank: i + 1 }));
 
-    return res.status(200).json({ success: true, data: { leaders, weekStart: cutoff } });
+    return res.status(200).json({ success: true, data: { leaders } });
   } catch (err) {
     console.error("Leaderboard error:", err);
     return res.status(500).json({ success: false, message: "Failed to fetch leaderboard." });
   }
 };
-
-// ─── ADMIN: RESET LEADERBOARD NOW ─────────────────────────────────────────
-exports.resetLeaderboard = async (req, res) => {
-  try {
-    const db = getDb();
-    await db.collection("config").doc("leaderboard").set({
-      resetAt: new Date(),
-    }, { merge: true });
-
-    return res.status(200).json({ success: true, message: "Leaderboard reset. Counting starts from now." });
-  } catch (err) {
-    console.error("Reset leaderboard error:", err);
-    return res.status(500).json({ success: false, message: "Failed to reset leaderboard." });
-  }
-};
-
-// ─── ADMIN: RESET LEADERBOARD NOW ─────────────────────────────────────────
-// exports.resetLeaderboard = async (req, res) => {
-//   try {
-//     const db = getDb();
-//     await db.collection("config").doc("leaderboard").set({
-//       resetAt: new Date(),
-//     }, { merge: true });
-
-//     return res.status(200).json({ success: true, message: "Leaderboard reset. Counting starts from now." });
-//   } catch (err) {
-//     console.error("Reset leaderboard error:", err);
-//     return res.status(500).json({ success: false, message: "Failed to reset leaderboard." });
-//   }
-// };
 // ─── ACTIVITY HISTORY (tasks + transactions + campaigns + last login) ────
 exports.getActivityHistory = async (req, res) => {
   try {
