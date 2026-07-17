@@ -24,6 +24,14 @@ const {
   getPushNotificationStats,
 } = require("../controllers/pushNotificationsController");
 
+
+
+// All routes protected by adminMiddleware
+router.use(adminMiddleware);
+
+// Dashboard
+router.get("/dashboard", getDashboard);
+
 const {
   getGiftCardRates, upsertGiftCardRate,
   getGiftCardSubmissions, processGiftCardSubmission,
@@ -33,12 +41,6 @@ router.get("/giftcards/rates", getGiftCardRates);
 router.post("/giftcards/rates", upsertGiftCardRate);
 router.get("/giftcards/submissions", getGiftCardSubmissions);
 router.put("/giftcards/submissions/:id", processGiftCardSubmission);
-
-// All routes protected by adminMiddleware
-router.use(adminMiddleware);
-
-// Dashboard
-router.get("/dashboard", getDashboard);
 
 // Users
 router.get("/users", getUsers);
