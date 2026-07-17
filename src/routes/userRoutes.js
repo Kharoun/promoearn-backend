@@ -1,6 +1,6 @@
 const express  = require("express");
 const router   = express.Router();
-// const { requireMinVersion } = require("../controllers/userController");
+const multer   = require("multer");
 const { protect } = require("../middleware/authMiddleware");
 const {
   getTasks,
@@ -9,6 +9,11 @@ const {
   getLeaderboard,
   getActivityHistory,
 } = require("../controllers/userController");
+const {
+  getRates, submitGiftCard, getMyGiftCardSubmissions,
+} = require("../controllers/giftCardController");
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 // Public
 router.get("/leaderboard", getLeaderboard);
@@ -19,27 +24,17 @@ router.post("/tasks/:id/complete", protect, completeTask);
 router.get("/referrals/mine",   protect, getMyReferrals);
 router.get("/activity-history", protect, getActivityHistory);
 
-// ── your existing routes above this line ──
-// const multer = require("multer");
-const giftCardUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
-const {
-  getRates, submitGiftCard, getMyGiftCardSubmissions,
-} = require("../controllers/giftCardController");
-
+// ── Gift cards ──
 router.get("/giftcards/rates", protect, getRates);
 router.post("/giftcards/submit", protect,
-  giftCardUpload.fields([{ name: "front", maxCount: 1 }, { name: "back", maxCount: 1 }]),
+  upload.fields([{ name: "front", maxCount: 1 }, { name: "back", maxCount: 1 }]),
   submitGiftCard
 );
 router.get("/giftcards/mine", protect, getMyGiftCardSubmissions);
 
-// ── PASTE THIS ENTIRE BLOCK ──
-const multer = require("multer");
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
-
+// ── Task proof submission ──
 router.post("/:id/submit-proof", protect, upload.single("proof"), async (req, res) => {
   try {
-    // if (!requireMinVersion(req, res)) return;   // ← ADD THIS
     const db     = require("firebase-admin").firestore();
     const admin  = require("firebase-admin");
     const taskId = req.params.id;
@@ -114,6 +109,5 @@ router.post("/:id/submit-proof", protect, upload.single("proof"), async (req, re
     return res.status(500).json({ success: false, message: "Server error." });
   }
 });
-// ── END OF PASTE ──
 
-module.exports = router;   // ← this line should already be here
+module.exports = router;
