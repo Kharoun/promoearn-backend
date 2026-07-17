@@ -20,7 +20,7 @@ router.get("/referrals/mine",   protect, getMyReferrals);
 router.get("/activity-history", protect, getActivityHistory);
 
 // ── your existing routes above this line ──
-const multer = require("multer");
+// const multer = require("multer");
 const giftCardUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 const {
   getRates, submitGiftCard, getMyGiftCardSubmissions,
