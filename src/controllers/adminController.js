@@ -645,12 +645,13 @@ exports.getGiftCardRates = async (req, res) => {
 exports.upsertGiftCardRate = async (req, res) => {
   try {
     const db = getDb();
-    const { id, brand, cardType, ratePercent, minFace, maxFace, active } = req.body;
+    const { id, brand, cardType, ratePercent, minFace, maxFace, active, logoUrl } = req.body;
     const data = {
       brand, cardType,
       ratePercent: parseFloat(ratePercent),
       minFace: parseFloat(minFace) || 0,
       maxFace: parseFloat(maxFace) || 0,
+      logoUrl: logoUrl || null,
       active: active !== false,
       updatedAt: new Date(),
     };
