@@ -19,12 +19,12 @@ exports.submitGiftCard = async (req, res) => {
   try {
     const db  = getDb();
     const uid = req.user.uid;
-    const { brand, cardType, faceValue, code, pin } = req.body;
+    const { brand, cardType, faceValue, code, pin, country } = req.body;
 
-    if (!brand || !cardType || !faceValue) {
+    if (!brand || !cardType || !faceValue || !country) {
       return res.status(400).json({ success: false, message: "Missing required fields." });
     }
-    if (cardType === "ecode" && !code) {
+    if (!code) {
       return res.status(400).json({ success: false, message: "Card code is required." });
     }
     if (cardType === "physical" && (!req.files?.front || !req.files?.back)) {
@@ -59,6 +59,17 @@ exports.submitGiftCard = async (req, res) => {
       backUrl  = await uploadOne(req.files.back[0], "back");
     }
 
+    if (cardType === "physical" && (!req.files?.front || !req.files?.back)) {
+      console.log("🔍 Gift card upload debug:", {
+        hasFiles: !!req.files,
+        fileKeys: req.files ? Object.keys(req.files) : [],
+        frontCount: req.files?.front?.length || 0,
+        backCount: req.files?.back?.length || 0,
+        bodyKeys: Object.keys(req.body || {}),
+      });
+      return res.status(400).json({ success: false, message: "Front and back photos are required for physical cards." });
+    }
+    
     const userDoc = await db.collection("users").doc(uid).get();
     const user = userDoc.exists ? userDoc.data() : {};
 
@@ -68,11 +79,12 @@ exports.submitGiftCard = async (req, res) => {
       email: user.email || "",
       brand,
       cardType,          // "ecode" | "physical"
+      country,
       faceValue: face,
       ratePercent: rate.ratePercent,
       quotedAmount,
-      code: cardType === "ecode" ? code : null,
-      pin: cardType === "ecode" ? (pin || null) : null,
+      code: code || null,   // stored for BOTH card types now
+      pin: pin || null,     // stored for BOTH card types now
       frontUrl,
       backUrl,
       status: "pending",
@@ -83,7 +95,17 @@ exports.submitGiftCard = async (req, res) => {
       type: "giftcard_submission",
       submissionId: subRef.id,
       userId: uid,
-      message: `New ${brand} ${cardType} gift card submitted ($${face} face value) by ${user.username || uid}`,
+      message: `New ${brand} ${cardType} gift card submitted ($${face} face value) by ${user.username || uid} · ${country}`,
+      read: false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    // Notify the user their submission was received
+    await db.collection("notifications").add({
+      userId: uid,
+      title: "🎁 Gift Card Submitted",
+      body: `Your ${brand} gift card ($${face.toFixed(2)} face value) was submitted for review. We'll notify you once it's verified.`,
+      type: "paymentAlerts",
       read: false,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });

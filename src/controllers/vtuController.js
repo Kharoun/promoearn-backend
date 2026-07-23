@@ -1,5 +1,6 @@
 const { getDb } = require("../config/firebase");
 const admin = require("firebase-admin");
+const { createNotification } = require("./notificationsController");
 const {
   buyAirtimeRemote, buyDataRemote, getDataPlansRemote,
   requeryRemote, genRequestId,
@@ -168,11 +169,25 @@ exports.buyAirtime = async (req, res) => {
         userId: uid, type: "airtime", description: `${network_label(network)} Airtime ₦${face}`,
         amount: -chargeUsd, status: "completed", createdAt: new Date(),
       });
+
+      await createNotification(uid, {
+        title: "📱 Airtime Purchase Successful",
+        body: `₦${face.toLocaleString()} airtime was sent to ${phone} on ${network_label(network)}.`,
+        type: "paymentAlerts",
+      });
+
       return res.json({ success: true, message: "Airtime purchase successful.", data: { chargeUsd } });
     } else {
       // refund
       await userRef.update({ balance: admin.firestore.FieldValue.increment(chargeUsd), updatedAt: new Date() });
       await txRef.update({ status: "failed", remoteResponse: remoteResult, completedAt: new Date() });
+
+      await createNotification(uid, {
+        title: "⚠️ Airtime Purchase Failed",
+        body: `Your ₦${face.toLocaleString()} airtime purchase to ${phone} failed and your balance was refunded.`,
+        type: "paymentAlerts",
+      });
+
       return res.status(400).json({
         success: false,
         message: remoteResult?.message || "Airtime purchase failed. You have been refunded.",
@@ -257,10 +272,24 @@ exports.buyData = async (req, res) => {
         userId: uid, type: "data", description: `${network_label(network)} Data — ${remoteResult.dataplan || planId}`,
         amount: -chargeUsd, status: "completed", createdAt: new Date(),
       });
+
+      await createNotification(uid, {
+        title: "📶 Data Purchase Successful",
+        body: `${remoteResult.dataplan || "Data plan"} was sent to ${phone} on ${network_label(network)}.`,
+        type: "paymentAlerts",
+      });
+
       return res.json({ success: true, message: "Data purchase successful.", data: { chargeUsd } });
     } else {
       await userRef.update({ balance: admin.firestore.FieldValue.increment(chargeUsd), updatedAt: new Date() });
       await txRef.update({ status: "failed", remoteResponse: remoteResult, completedAt: new Date() });
+
+      await createNotification(uid, {
+        title: "⚠️ Data Purchase Failed",
+        body: `Your data purchase to ${phone} failed and your balance was refunded.`,
+        type: "paymentAlerts",
+      });
+
       return res.status(400).json({
         success: false,
         message: remoteResult?.message || "Data purchase failed. You have been refunded.",
