@@ -13,6 +13,15 @@ const {
   getRates, submitGiftCard, getMyGiftCardSubmissions,
 } = require("../controllers/giftCardController");
 
+const {
+  getPublicVtuConfig, getDataPlans, buyAirtime, buyData,
+} = require("../controllers/vtuController");
+
+router.get("/vtu/config", protect, getPublicVtuConfig);
+router.get("/vtu/data-plans", protect, getDataPlans);
+router.post("/vtu/airtime", protect, buyAirtime);
+router.post("/vtu/data", protect, buyData);
+
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 // Public

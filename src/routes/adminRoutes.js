@@ -29,6 +29,14 @@ const {
 // All routes protected by adminMiddleware
 router.use(adminMiddleware);
 
+const {
+  getVtuConfigAdmin, updateVtuConfig, getVtuBalanceAdmin,
+} = require("../controllers/vtuController");
+
+router.get("/vtu/config", getVtuConfigAdmin);
+router.post("/vtu/config", updateVtuConfig);
+router.get("/vtu/balance", getVtuBalanceAdmin);
+
 // Dashboard
 router.get("/dashboard", getDashboard);
 
