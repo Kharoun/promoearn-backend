@@ -30,6 +30,16 @@ const {
 router.use(adminMiddleware);
 
 const {
+  getConfigAdmin: getIntlConfigAdmin, updateConfig: updateIntlConfig,
+  getWithdrawalsAdmin, processWithdrawalAdmin,
+} = require("../controllers/internationalWithdrawalController");
+
+router.get("/intl-withdrawals/config", getIntlConfigAdmin);
+router.post("/intl-withdrawals/config", updateIntlConfig);
+router.get("/intl-withdrawals", getWithdrawalsAdmin);
+router.put("/intl-withdrawals/:id", processWithdrawalAdmin);
+ 
+const {
   getVtuConfigAdmin, updateVtuConfig, getVtuBalanceAdmin,
 } = require("../controllers/vtuController");
 

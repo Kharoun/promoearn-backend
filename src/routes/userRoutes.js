@@ -14,6 +14,13 @@ const {
 } = require("../controllers/giftCardController");
 
 const {
+  getPublicConfig: getIntlConfig, submitWithdrawal: submitIntlWithdrawal,
+} = require("../controllers/internationalWithdrawalController");
+
+router.get("/intl-withdrawals/config", protect, getIntlConfig);
+router.post("/intl-withdrawals", protect, submitIntlWithdrawal);
+
+const {
   getPublicVtuConfig, getDataPlans, buyAirtime, buyData,
 } = require("../controllers/vtuController");
 
