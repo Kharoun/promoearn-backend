@@ -147,6 +147,7 @@ exports.buyAirtime = async (req, res) => {
         network, phone, amount: face, requestId,
         sandboxFail: req.body.__sandboxFail === true, // testing only, remove before real launch UI exposes this
       });
+      console.log("RAW mySubwallet response:", JSON.stringify(remoteResult, null, 2));
     } catch (apiErr) {
       // network/timeout — don't assume failure, requery before refunding
       try {
