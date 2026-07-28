@@ -117,16 +117,22 @@ exports.getLeaderboard = async (req, res) => {
     return res.status(500).json({ success: false, message: "Failed to fetch leaderboard." });
   }
 };
-// ─── ACTIVITY HISTORY (tasks + transactions + campaigns + last login) ────
+
+function network_label(id) {
+  return { 1: "MTN", 2: "Airtel", 3: "Glo", 4: "9mobile" }[id] || "Network";
+}
+
+// ─── ACTIVITY HISTORY (tasks + transactions + campaigns + VTU + last login) ─
 exports.getActivityHistory = async (req, res) => {
   try {
     const db  = getDb();
     const uid = req.user.uid;
 
-    const [subsSnap, txSnap, campSnap, userDoc] = await Promise.all([
+    const [subsSnap, txSnap, campSnap, vtuSnap, userDoc] = await Promise.all([
       db.collection("taskSubmissions").where("userId", "==", uid).orderBy("submittedAt", "desc").limit(30).get(),
       db.collection("transactions").where("userId", "==", uid).orderBy("createdAt", "desc").limit(30).get(),
       db.collection("campaigns").where("submittedBy", "==", uid).orderBy("createdAt", "desc").limit(30).get(),
+      db.collection("vtuTransactions").where("userId", "==", uid).orderBy("createdAt", "desc").limit(30).get(),
       db.collection("users").doc(uid).get(),
     ]);
 
@@ -166,6 +172,34 @@ exports.getActivityHistory = async (req, res) => {
         title: d.brandName || "Campaign",
         subtitle: `Status: ${d.status}`,
         amount: d.quotedTotal || 0,
+        status: d.status,
+        date: d.createdAt,
+      });
+    });
+
+    // ── VTU (airtime & data) ──
+    // Note: pending_topup transactions already deducted the user's
+    // balance (they're queued for delivery, not refunded), so they show
+    // as a negative amount just like a completed purchase would. Failed
+    // ones were refunded, so they show no amount — net effect was zero.
+    vtuSnap.docs.forEach((doc) => {
+      const d = doc.data();
+      const label = d.type === "airtime"
+        ? `${network_label(d.network)} Airtime ₦${(d.faceValueNgn || 0).toLocaleString()}`
+        : `${network_label(d.network)} Data${d.remoteResponse?.dataplan ? ` — ${d.remoteResponse.dataplan}` : ""}`;
+
+      const statusLabel =
+        d.status === "pending_topup" ? "Pending" :
+        d.status === "success"       ? "Delivered" :
+        d.status === "failed"        ? "Failed — refunded" :
+        d.status || "Processing";
+
+      items.push({
+        id: doc.id,
+        category: "vtu",
+        title: label,
+        subtitle: `Status: ${statusLabel}`,
+        amount: d.status === "failed" ? null : -(d.chargeUsd || 0),
         status: d.status,
         date: d.createdAt,
       });
