@@ -1,5 +1,7 @@
 const { getDb } = require("../config/firebase");
 const admin = require("firebase-admin");
+const { uploadBuffer } = require("../utils/cloudinary"); // add this near your other requires at the top of the file
+
 
 // ─── PUBLIC: Get active rates ──────────────────────────────────────────────
 exports.getRates = async (req, res) => {
@@ -46,17 +48,11 @@ exports.submitGiftCard = async (req, res) => {
     const quotedAmount = +(face * (rate.ratePercent / 100)).toFixed(2);
 
     // Upload photos for physical cards
+   
     let frontUrl = null, backUrl = null;
     if (cardType === "physical") {
-      const bucket = admin.storage().bucket();
-      const uploadOne = async (file, label) => {
-        const filename = `giftcard-proofs/${uid}_${Date.now()}_${label}.jpg`;
-        const fileRef = bucket.file(filename);
-        await fileRef.save(file.buffer, { metadata: { contentType: file.mimetype || "image/jpeg" }, public: true });
-        return `https://storage.googleapis.com/${bucket.name}/${filename}`;
-      };
-      frontUrl = await uploadOne(req.files.front[0], "front");
-      backUrl  = await uploadOne(req.files.back[0], "back");
+      frontUrl = await uploadBuffer(req.files.front[0].buffer, "giftcard-proofs");
+      backUrl  = await uploadBuffer(req.files.back[0].buffer, "giftcard-proofs");
     }
 
     if (cardType === "physical" && (!req.files?.front || !req.files?.back)) {

@@ -9,6 +9,7 @@ const {
   getLeaderboard,
   getActivityHistory,
 } = require("../controllers/userController");
+const { uploadBuffer } = require("../utils/cloudinary"); // add near top of file
 const {
   getRates, submitGiftCard, getMyGiftCardSubmissions,
 } = require("../controllers/giftCardController");
@@ -49,12 +50,13 @@ router.post("/giftcards/submit", protect,
 router.get("/giftcards/mine", protect, getMyGiftCardSubmissions);
 
 // ── Task proof submission ──
-router.post("/:id/submit-proof", protect, upload.single("proof"), async (req, res) => {
+router.post("/:id/submit-proof", protect, async (req, res) => {
   try {
     const db     = require("firebase-admin").firestore();
     const admin  = require("firebase-admin");
     const taskId = req.params.id;
     const uid    = req.user.uid;
+    const { base64Image } = req.body;
 
     const taskDoc = await db.collection("tasks").doc(taskId).get();
     if (!taskDoc.exists) {
@@ -72,16 +74,10 @@ router.post("/:id/submit-proof", protect, upload.single("proof"), async (req, re
     }
 
     let proofUrl = null;
-    if (req.file) {
+    if (base64Image) {
       try {
-        const bucket   = admin.storage().bucket();
-        const filename = `task-proofs/${uid}_${taskId}_${Date.now()}.jpg`;
-        const fileRef  = bucket.file(filename);
-        await fileRef.save(req.file.buffer, {
-          metadata: { contentType: req.file.mimetype || "image/jpeg" },
-          public:   true,
-        });
-        proofUrl = `https://storage.googleapis.com/${bucket.name}/${filename}`;
+        const buffer = Buffer.from(base64Image, "base64");
+        proofUrl = await uploadBuffer(buffer, "task-proofs");
       } catch (uploadErr) {
         console.error("Proof image upload failed:", uploadErr.message);
       }

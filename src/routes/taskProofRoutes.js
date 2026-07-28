@@ -4,7 +4,7 @@ const { protect }      = require("../middleware/authMiddleware");
 
 
 const router = express.Router();
-
+console.log("🔥 SUBMIT-PROOF HIT:", req.originalUrl, "body keys:", Object.keys(req.body || {}), "has file:", !!req.file);
 
 // POST /api/v1/tasks/:id/submit-proof
 router.post("/:id/submit-proof", protect, async (req, res) => {
