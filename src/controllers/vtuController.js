@@ -1,8 +1,12 @@
 const { getDb } = require("../config/firebase");
 const admin = require("firebase-admin");
-const { createNotification, notifyAdminsLowVtuBalance } = require("./notificationsController");
 const {
-  buyAirtimeRemote, buyDataRemote, getDataPlansRemote,
+  createNotification,
+  notifyAdminsLowVtuBalance,
+  markVtuLowBalanceResolved,
+} = require("./notificationsController");
+const {
+  buyAirtimeRemote, buyDataRemote, getDataPlansRemote, getBalanceRemote,
   requeryRemote, genRequestId, isInsufficientBalanceError,
 } = require("../utils/mysubwallet");
 
@@ -366,7 +370,6 @@ exports.buyData = async (req, res) => {
 // ─── Admin: live wallet balance from mySubwallet ───────────────────────────
 exports.getVtuBalanceAdmin = async (req, res) => {
   try {
-    const { getBalanceRemote } = require("../utils/mysubwallet");
     const remote = await getBalanceRemote();
     return res.json({ success: true, data: remote });
   } catch (err) {
@@ -396,6 +399,152 @@ exports.getPendingVtuQueue = async (req, res) => {
   } catch (err) {
     console.error("getPendingVtuQueue error:", err.response?.data || err.message);
     return res.status(500).json({ success: false, message: "Failed to fetch pending queue." });
+  }
+};
+
+// ─── Core fulfillment logic: retry all pending_topup orders ───────────────
+// Called by:
+//   1. The cron poller (runs on a schedule, checks float automatically)
+//   2. The manual admin "process queue" endpoint (instant, after a topup)
+//
+// Behavior:
+//   - Re-checks LIVE mySubwallet balance before every single order — if
+//     float runs out mid-batch, stops immediately and leaves the rest
+//     queued for the next run (never assumes float based on a stale read).
+//   - On success: marks the order complete, writes the ledger entry,
+//     notifies the user their order was delivered.
+//   - On a genuine failure (not a balance issue — e.g. bad phone number
+//     that somehow got this far, provider-side rejection): refunds the
+//     user and notifies them, same as the original purchase flow does.
+//   - If insufficient-balance happens again mid-retry: leaves that order
+//     (and everything after it) queued, does NOT refund — it's not a
+//     failure, just still waiting.
+//   - Once the queue is fully drained, clears the admin alert so the next
+//     low-balance episode raises a fresh notification.
+exports.retryPendingVtuOrders = async () => {
+  const db = getDb();
+  const summary = { attempted: 0, succeeded: 0, failed: 0, stoppedEarly: false };
+
+  const snap = await db.collection("vtuTransactions")
+    .where("status", "==", "pending_topup")
+    .get();
+
+  const orders = snap.docs
+    .map((doc) => ({ id: doc.id, ref: doc.ref, ...doc.data() }))
+    .sort((a, b) => (a.createdAt?._seconds || 0) - (b.createdAt?._seconds || 0));
+
+  for (const order of orders) {
+    // Re-check live float before each attempt
+    let liveBalanceNgn;
+    try {
+      const bal = await getBalanceRemote();
+      liveBalanceNgn = parseFloat(bal.balance || 0);
+    } catch {
+      summary.stoppedEarly = true;
+      break; // mySubwallet unreachable right now — stop, next run retries
+    }
+
+    if (liveBalanceNgn < order.chargeNgn) {
+      summary.stoppedEarly = true;
+      break; // not enough float for this order — stop, leave rest queued
+    }
+
+    summary.attempted++;
+
+    let remoteResult;
+    let stillInsufficient = false;
+
+    try {
+      remoteResult = order.type === "airtime"
+        ? await buyAirtimeRemote({
+            network: order.network, phone: order.phone,
+            amount: order.faceValueNgn, requestId: order.requestId,
+          })
+        : await buyDataRemote({
+            network: order.network, phone: order.phone,
+            dataPlan: order.planId, requestId: order.requestId,
+          });
+    } catch (apiErr) {
+      if (isInsufficientBalanceError(apiErr)) {
+        stillInsufficient = true;
+      } else {
+        try {
+          remoteResult = await requeryRemote(order.requestId);
+        } catch {
+          remoteResult = { status: "fail", message: "Could not confirm transaction status." };
+        }
+      }
+    }
+
+    if (stillInsufficient) {
+      summary.stoppedEarly = true;
+      break; // float ran out mid-batch — stop, leave this and rest queued
+    }
+
+    const succeeded = remoteResult?.status === "success";
+
+    if (succeeded) {
+      await order.ref.update({
+        status: "success",
+        remoteResponse: remoteResult,
+        remoteTransId: remoteResult.transid,
+        completedAt: new Date(),
+      });
+
+      const desc = order.type === "airtime"
+        ? `${network_label(order.network)} Airtime ₦${order.faceValueNgn}`
+        : `${network_label(order.network)} Data — ${remoteResult.dataplan || order.planId}`;
+
+      await db.collection("transactions").add({
+        userId: order.userId, type: order.type, description: desc,
+        amount: -order.chargeUsd, status: "completed", createdAt: new Date(),
+      });
+
+      await createNotification(order.userId, {
+        title: order.type === "airtime" ? "📱 Airtime Delivered" : "📶 Data Delivered",
+        body: order.type === "airtime"
+          ? `₦${order.faceValueNgn.toLocaleString()} airtime was sent to ${order.phone}.`
+          : `${remoteResult.dataplan || "Your data plan"} was sent to ${order.phone}.`,
+        type: "paymentAlerts",
+      });
+
+      summary.succeeded++;
+    } else {
+      // Genuine failure on retry (not a balance issue) — refund
+      await db.collection("users").doc(order.userId).update({
+        balance: admin.firestore.FieldValue.increment(order.chargeUsd),
+        updatedAt: new Date(),
+      });
+      await order.ref.update({ status: "failed", remoteResponse: remoteResult, completedAt: new Date() });
+
+      await createNotification(order.userId, {
+        title: order.type === "airtime" ? "⚠️ Airtime Purchase Failed" : "⚠️ Data Purchase Failed",
+        body: "Your queued order could not be delivered and your balance was refunded.",
+        type: "paymentAlerts",
+      });
+
+      summary.failed++;
+    }
+  }
+
+  // If nothing is left pending, clear the admin alert
+  const remainingSnap = await db.collection("vtuTransactions")
+    .where("status", "==", "pending_topup").limit(1).get();
+  if (remainingSnap.empty) {
+    await markVtuLowBalanceResolved(db);
+  }
+
+  return summary;
+};
+
+// ─── Admin: manually trigger queue processing (e.g. right after a topup) ──
+exports.processVtuQueueAdmin = async (req, res) => {
+  try {
+    const summary = await exports.retryPendingVtuOrders();
+    return res.json({ success: true, message: "Queue processed.", data: summary });
+  } catch (err) {
+    console.error("processVtuQueueAdmin error:", err);
+    return res.status(500).json({ success: false, message: "Failed to process queue." });
   }
 };
 
