@@ -30,6 +30,13 @@ exports.submitGiftCard = async (req, res) => {
       return res.status(400).json({ success: false, message: "Card code is required." });
     }
     if (cardType === "physical" && (!req.files?.front || !req.files?.back)) {
+      console.log("🔍 Gift card upload debug:", {
+        hasFiles: !!req.files,
+        fileKeys: req.files ? Object.keys(req.files) : [],
+        frontCount: req.files?.front?.length || 0,
+        backCount: req.files?.back?.length || 0,
+        bodyKeys: Object.keys(req.body || {}),
+      });
       return res.status(400).json({ success: false, message: "Front and back photos are required for physical cards." });
     }
 
@@ -48,24 +55,17 @@ exports.submitGiftCard = async (req, res) => {
     const quotedAmount = +(face * (rate.ratePercent / 100)).toFixed(2);
 
     // Upload photos for physical cards
-   
     let frontUrl = null, backUrl = null;
     if (cardType === "physical") {
-      frontUrl = await uploadBuffer(req.files.front[0].buffer, "giftcard-proofs");
-      backUrl  = await uploadBuffer(req.files.back[0].buffer, "giftcard-proofs");
+      try {
+        frontUrl = await uploadBuffer(req.files.front[0].buffer, "giftcard-proofs");
+        backUrl  = await uploadBuffer(req.files.back[0].buffer, "giftcard-proofs");
+      } catch (uploadErr) {
+        console.error("Gift card photo upload failed:", uploadErr.message);
+        return res.status(500).json({ success: false, message: "Failed to upload card photos. Please try again." });
+      }
     }
 
-    if (cardType === "physical" && (!req.files?.front || !req.files?.back)) {
-      console.log("🔍 Gift card upload debug:", {
-        hasFiles: !!req.files,
-        fileKeys: req.files ? Object.keys(req.files) : [],
-        frontCount: req.files?.front?.length || 0,
-        backCount: req.files?.back?.length || 0,
-        bodyKeys: Object.keys(req.body || {}),
-      });
-      return res.status(400).json({ success: false, message: "Front and back photos are required for physical cards." });
-    }
-    
     const userDoc = await db.collection("users").doc(uid).get();
     const user = userDoc.exists ? userDoc.data() : {};
 
