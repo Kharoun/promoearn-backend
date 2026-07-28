@@ -16,6 +16,7 @@ const WITHDRAWAL_FEE = 200 / NGN_RATE;  // ₦200 = ~$0.133
 // const MIN_WITHDRAWAL = 98 / NGN_RATE;  // ~₦200, just for testing
 // const WITHDRAWAL_FEE = 20 / NGN_RATE;  // ₦200 = ~$0.133
 const PAYSTACK_SECRET  = process.env.PAYSTACK_SECRET_KEY;
+const ACTIVATION_LOCKED_BONUS = 3000 / NGN_RATE; // ₦3000 = $2.00, locked until first gift card is approved
 
 // ─── Helper: call Paystack API ────────────────────────────────────────────────
 const paystackRequest = (method, path, body) => {
@@ -217,18 +218,19 @@ const activateUserFromPayment = async (db, userId) => {
   const user = { uid: userDoc.id, ...userDoc.data() };
   if (user.isActivated) return user;
 
-  await db.collection("users").doc(userId).update({
-    isActivated: true,
-    balance: (user.balance || 0) + WELCOME_BONUS,
-    totalEarned: (user.totalEarned || 0) + WELCOME_BONUS,
-    pendingActivationRef: null,
-    updatedAt: new Date(),
-  });
+// AFTER
+await db.collection("users").doc(userId).update({
+  isActivated: true,
+  lockedBalance: (user.lockedBalance || 0) + ACTIVATION_LOCKED_BONUS,
+  pendingActivationRef: null,
+  updatedAt: new Date(),
+});
 
-  await db.collection("transactions").add({
-    userId, type: "bonus", description: "Welcome bonus",
-    amount: WELCOME_BONUS, status: "completed", createdAt: new Date(),
-  });
+await db.collection("transactions").add({
+  userId, type: "bonus_locked",
+  description: "Welcome bonus (locked — trade a gift card to unlock)",
+  amount: ACTIVATION_LOCKED_BONUS, status: "locked", createdAt: new Date(),
+});
   await db.collection("transactions").add({
     userId, type: "registration", description: "Registration fee (Flutterwave)",
     amount: -REGISTRATION_FEE, status: "completed", createdAt: new Date(),
@@ -259,11 +261,11 @@ const activateUserFromPayment = async (db, userId) => {
 
   await createNotification(userId, {
     title: "🎉 Account Activated!",
-    body: `Welcome to PromoEarn! Your $${WELCOME_BONUS.toFixed(2)} welcome bonus has been added.`,
+    body: `Welcome to PromoEarn! A $${ACTIVATION_LOCKED_BONUS.toFixed(2)} bonus has been added — it unlocks for withdrawal once your first gift card or in-app trade is approved.`,
     type: "paymentAlerts",
   });
 
-  return { ...user, balance: (user.balance || 0) + WELCOME_BONUS };
+  return { ...user, balance: (user.balance || 0)};
 };
 
 const reactivateUserFromPayment = async (db, userId) => {

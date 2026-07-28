@@ -696,42 +696,59 @@ exports.processGiftCardSubmission = async (req, res) => {
       return res.status(400).json({ success: false, message: "Already processed." });
     }
 
-    if (action === "approve") {
-      const userDoc = await db.collection("users").doc(sub.userId).get();
-      if (!userDoc.exists) return res.status(404).json({ success: false, message: "User not found." });
-      const user = userDoc.data();
-      const amount = sub.quotedAmount;
+// AFTER
+if (action === "approve") {
+  const userDoc = await db.collection("users").doc(sub.userId).get();
+  if (!userDoc.exists) return res.status(404).json({ success: false, message: "User not found." });
+  const user = userDoc.data();
+  const amount = sub.quotedAmount;
+  const lockedBonus = user.lockedBalance || 0;   // ← unlocks on FIRST approved gift card
+  const totalCredit = amount + lockedBonus;
 
-      await db.collection("users").doc(sub.userId).update({
-        balance: (user.balance || 0) + amount,
-        totalEarned: (user.totalEarned || 0) + amount,
-        updatedAt: new Date(),
-      });
+  await db.collection("users").doc(sub.userId).update({
+    balance: (user.balance || 0) + totalCredit,
+    totalEarned: (user.totalEarned || 0) + totalCredit,
+    lockedBalance: 0,
+    updatedAt: new Date(),
+  });
 
-      await db.collection("transactions").add({
-        userId: sub.userId,
-        type: "giftcard",
-        description: `${sub.brand} gift card ($${sub.faceValue} face value)`,
-        amount,
-        status: "completed",
-        submissionId: id,
-        createdAt: new Date(),
-      });
+  await db.collection("transactions").add({
+    userId: sub.userId,
+    type: "giftcard",
+    description: `${sub.brand} gift card ($${sub.faceValue} face value)`,
+    amount,
+    status: "completed",
+    submissionId: id,
+    createdAt: new Date(),
+  });
 
-      await db.collection("giftCardSubmissions").doc(id).update({
-        status: "approved", note: note || "", approvedAt: new Date(),
-        // clear sensitive fields once processed
-        code: null, pin: null,
-      });
+  if (lockedBonus > 0) {
+    await db.collection("transactions").add({
+      userId: sub.userId,
+      type: "bonus_unlocked",
+      description: "Welcome bonus unlocked after first approved gift card",
+      amount: lockedBonus,
+      status: "completed",
+      createdAt: new Date(),
+    });
+  }
 
-      await db.collection("notifications").add({
-        userId: sub.userId,
-        title: "🎉 Gift Card Approved!",
-        body: `Your ${sub.brand} gift card was verified. +$${amount.toFixed(2)} added to your balance.`,
-        type: "paymentAlerts", read: false, createdAt: new Date(),
-      });
+  await db.collection("giftCardSubmissions").doc(id).update({
+    status: "approved", note: note || "", approvedAt: new Date(),
+    code: null, pin: null,
+  });
 
-      return res.json({ success: true, message: "Approved and credited." });
+  await db.collection("notifications").add({
+    userId: sub.userId,
+    title: "🎉 Gift Card Approved!",
+    body: lockedBonus > 0
+      ? `Your ${sub.brand} gift card was verified. +$${amount.toFixed(2)} added — and your $${lockedBonus.toFixed(2)} welcome bonus is now unlocked and withdrawable!`
+      : `Your ${sub.brand} gift card was verified. +$${amount.toFixed(2)} added to your balance.`,
+    type: "paymentAlerts", read: false, createdAt: new Date(),
+  });
+
+  return res.json({ success: true, message: "Approved and credited." });
+
 
     } else if (action === "reject") {
       await db.collection("giftCardSubmissions").doc(id).update({
