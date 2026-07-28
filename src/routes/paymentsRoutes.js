@@ -77,17 +77,23 @@ router.post("/approve-activation", protect, isAdmin, async (req, res) => {
       if (!user.isActivated) {
         const WELCOME_BONUS  = 0;
         const REFERRAL_BONUS = 1.33;
+        const ACTIVATION_LOCKED_BONUS = 3000 / 1500; // ₦3000 = $2.00, locked until first gift card approved
 
         await db.collection("users").doc(userId).update({
           isActivated: true,
-          balance:     (user.balance     || 0) + WELCOME_BONUS,
-          totalEarned: (user.totalEarned || 0) + WELCOME_BONUS,
+          lockedBalance: (user.lockedBalance || 0) + ACTIVATION_LOCKED_BONUS,
           updatedAt:   new Date(),
         });
 
         await db.collection("transactions").add({
           userId, type: "registration", description: "Manual bank transfer activation",
           amount: -3.00, status: "completed", createdAt: new Date(),
+        });
+
+        await db.collection("transactions").add({
+          userId, type: "bonus_locked",
+          description: "Welcome bonus (locked — trade a gift card or in-app purchase to unlock)",
+          amount: ACTIVATION_LOCKED_BONUS, status: "locked", createdAt: new Date(),
         });
 
         // Referral bonus
@@ -139,6 +145,75 @@ router.post("/approve-activation", protect, isAdmin, async (req, res) => {
     }
   } catch (err) {
     console.error("approve-activation error:", err);
+    return res.status(500).json({ success: false, message: "Server error." });
+  }
+});
+
+// ⚠️ DEV/TEST ONLY — REMOVE BEFORE PRODUCTION
+// Directly grants the locked activation bonus to a given uid, bypassing
+// payment/pendingActivations entirely. Lets you re-test the bonus flow
+// without spending real money or resubmitting forms each time.
+router.post("/dev/force-activate", protect, isAdmin, async (req, res) => {
+  try {
+    const { userId } = req.body;
+    if (!userId) {
+      return res.status(400).json({ success: false, message: "userId is required." });
+    }
+
+    const db = getDb();
+    const userDoc = await db.collection("users").doc(userId).get();
+    if (!userDoc.exists) {
+      return res.status(404).json({ success: false, message: "User not found." });
+    }
+    const user = userDoc.data();
+
+    if (user.isActivated) {
+      return res.status(400).json({ success: false, message: "User is already activated." });
+    }
+
+    const ACTIVATION_LOCKED_BONUS = 3000 / 1500; // $2.00
+
+    await db.collection("users").doc(userId).update({
+      isActivated: true,
+      lockedBalance: (user.lockedBalance || 0) + ACTIVATION_LOCKED_BONUS,
+      updatedAt: new Date(),
+    });
+
+    await db.collection("transactions").add({
+      userId, type: "bonus_locked",
+      description: "Welcome bonus (locked — trade a gift card to unlock) [DEV FORCE-ACTIVATE]",
+      amount: ACTIVATION_LOCKED_BONUS, status: "locked", createdAt: new Date(),
+    });
+
+    return res.json({
+      success: true,
+      message: `User force-activated with $${ACTIVATION_LOCKED_BONUS.toFixed(2)} locked bonus.`,
+    });
+  } catch (err) {
+    console.error("dev/force-activate error:", err);
+    return res.status(500).json({ success: false, message: "Server error." });
+  }
+});
+
+// ⚠️ DEV/TEST ONLY — REMOVE BEFORE PRODUCTION
+// Resets a user back to pre-activation state so you can re-run the test loop.
+router.post("/dev/force-reset", protect, isAdmin, async (req, res) => {
+  try {
+    const { userId } = req.body;
+    if (!userId) {
+      return res.status(400).json({ success: false, message: "userId is required." });
+    }
+
+    const db = getDb();
+    await db.collection("users").doc(userId).update({
+      isActivated: false,
+      lockedBalance: 0,
+      updatedAt: new Date(),
+    });
+
+    return res.json({ success: true, message: "User reset to pre-activation state." });
+  } catch (err) {
+    console.error("dev/force-reset error:", err);
     return res.status(500).json({ success: false, message: "Server error." });
   }
 });
