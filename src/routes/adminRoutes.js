@@ -38,14 +38,17 @@ router.get("/intl-withdrawals/config", getIntlConfigAdmin);
 router.post("/intl-withdrawals/config", updateIntlConfig);
 router.get("/intl-withdrawals", getWithdrawalsAdmin);
 router.put("/intl-withdrawals/:id", processWithdrawalAdmin);
- 
+
 const {
   getVtuConfigAdmin, updateVtuConfig, getVtuBalanceAdmin,
+  getPendingVtuQueue, processVtuQueueAdmin,
 } = require("../controllers/vtuController");
 
 router.get("/vtu/config", getVtuConfigAdmin);
 router.post("/vtu/config", updateVtuConfig);
 router.get("/vtu/balance", getVtuBalanceAdmin);
+router.get("/vtu/pending-queue", getPendingVtuQueue);
+router.post("/vtu/process-queue", processVtuQueueAdmin);
 
 // Dashboard
 router.get("/dashboard", getDashboard);

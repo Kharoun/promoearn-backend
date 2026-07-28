@@ -6,6 +6,7 @@ const morgan = require("morgan");
 
 const { initFirebase } = require("./config/firebase");
 const authRoutes = require("./routes/authRoutes");
+const { startVtuQueuePoller } = require("./cron/vtuQueuePoller");
 
 
 // ─── Initialize Firebase ──────────────────────────────────────────────────────
@@ -144,4 +145,5 @@ app.listen(PORT, () => {
   console.log(`🌐 Health check: http://localhost:${PORT}/health\n`);
 });
 
+startVtuQueuePoller();
 module.exports = app;

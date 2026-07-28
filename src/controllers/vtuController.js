@@ -1,9 +1,9 @@
 const { getDb } = require("../config/firebase");
 const admin = require("firebase-admin");
-const { createNotification } = require("./notificationsController");
+const { createNotification, notifyAdminsLowVtuBalance } = require("./notificationsController");
 const {
   buyAirtimeRemote, buyDataRemote, getDataPlansRemote,
-  requeryRemote, genRequestId,
+  requeryRemote, genRequestId, isInsufficientBalanceError,
 } = require("../utils/mysubwallet");
 
 const NGN_RATE = 1500; // keep in sync with your withdrawal conversion rate
@@ -142,19 +142,51 @@ exports.buyAirtime = async (req, res) => {
     });
 
     let remoteResult;
+    let pendingTopup = false;
+
     try {
       remoteResult = await buyAirtimeRemote({
         network, phone, amount: face, requestId,
         sandboxFail: req.body.__sandboxFail === true, // testing only, remove before real launch UI exposes this
       });
-      // console.log("RAW mySubwallet response:", JSON.stringify(remoteResult, null, 2));
     } catch (apiErr) {
-      // network/timeout — don't assume failure, requery before refunding
-      try {
-        remoteResult = await requeryRemote(requestId);
-      } catch {
-        remoteResult = { status: "fail", message: "Could not confirm transaction status." };
+      if (isInsufficientBalanceError(apiErr)) {
+        pendingTopup = true;
+      } else {
+        // network/timeout/other — don't assume failure, requery before refunding
+        try {
+          remoteResult = await requeryRemote(requestId);
+        } catch {
+          remoteResult = { status: "fail", message: "Could not confirm transaction status." };
+        }
       }
+    }
+
+    // ── mySubwallet float is empty — queue the order rather than fail it.
+    // The user's balance stays deducted (they're still owed this order,
+    // it's not a failure). Admins get a debounced in-app alert. A retry
+    // job / manual admin trigger fulfills it once float is topped up.
+    if (pendingTopup) {
+      await txRef.update({
+        status: "pending_topup",
+        pendingReason: "insufficient_float",
+        updatedAt: new Date(),
+      });
+
+      await notifyAdminsLowVtuBalance(db);
+
+      await createNotification(uid, {
+        title: "⏳ Airtime Order Received",
+        body: `Your ₦${face.toLocaleString()} airtime order to ${phone} is queued and will be delivered shortly.`,
+        type: "paymentAlerts",
+      });
+
+      return res.json({
+        success: true,
+        pending: true,
+        message: "Your order has been received and will be delivered shortly.",
+        data: { chargeUsd },
+      });
     }
 
     const succeeded = remoteResult?.status === "success";
@@ -250,14 +282,43 @@ exports.buyData = async (req, res) => {
     });
 
     let remoteResult;
+    let pendingTopup = false;
+
     try {
       remoteResult = await buyDataRemote({ network, phone, dataPlan: planId, requestId });
     } catch (apiErr) {
-      try {
-        remoteResult = await requeryRemote(requestId);
-      } catch {
-        remoteResult = { status: "fail", message: "Could not confirm transaction status." };
+      if (isInsufficientBalanceError(apiErr)) {
+        pendingTopup = true;
+      } else {
+        try {
+          remoteResult = await requeryRemote(requestId);
+        } catch {
+          remoteResult = { status: "fail", message: "Could not confirm transaction status." };
+        }
       }
+    }
+
+    if (pendingTopup) {
+      await txRef.update({
+        status: "pending_topup",
+        pendingReason: "insufficient_float",
+        updatedAt: new Date(),
+      });
+
+      await notifyAdminsLowVtuBalance(db);
+
+      await createNotification(uid, {
+        title: "⏳ Data Order Received",
+        body: `Your data order to ${phone} is queued and will be delivered shortly.`,
+        type: "paymentAlerts",
+      });
+
+      return res.json({
+        success: true,
+        pending: true,
+        message: "Your order has been received and will be delivered shortly.",
+        data: { chargeUsd },
+      });
     }
 
     const succeeded = remoteResult?.status === "success";
@@ -311,6 +372,30 @@ exports.getVtuBalanceAdmin = async (req, res) => {
   } catch (err) {
     console.error("getVtuBalanceAdmin error:", err.response?.data || err.message);
     return res.status(500).json({ success: false, message: "Failed to fetch balance." });
+  }
+};
+
+// ─── Admin: list orders stuck waiting on mySubwallet topup ─────────────────
+exports.getPendingVtuQueue = async (req, res) => {
+  try {
+    const db = getDb();
+    const snap = await db.collection("vtuTransactions")
+      .where("status", "==", "pending_topup")
+      .get();
+
+    const orders = snap.docs
+      .map((doc) => ({ id: doc.id, ...doc.data() }))
+      .sort((a, b) => (a.createdAt?._seconds || 0) - (b.createdAt?._seconds || 0));
+
+    const totalNgnNeeded = orders.reduce((sum, o) => sum + (o.chargeNgn || 0), 0);
+
+    return res.json({
+      success: true,
+      data: { orders, count: orders.length, totalNgnNeeded },
+    });
+  } catch (err) {
+    console.error("getPendingVtuQueue error:", err.response?.data || err.message);
+    return res.status(500).json({ success: false, message: "Failed to fetch pending queue." });
   }
 };
 

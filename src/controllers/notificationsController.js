@@ -144,3 +144,61 @@ const sendPushNotification = async (pushToken, title, body, data = {}) => {
     console.error("Push notification error:", err);
   }
 };
+
+// ─── ADMIN: NOTIFY LOW mySubwallet FLOAT (debounced) ──────────────────────
+// Call this every time a VTU order gets queued as pending_topup. It only
+// actually notifies admins once per "episode" — if an unresolved alert
+// already exists, this is a no-op, so many queued orders in a row don't
+// spam admins with repeat notifications.
+exports.notifyAdminsLowVtuBalance = async (db) => {
+  try {
+    const alertsRef = db.collection("adminAlerts");
+    const existing = await alertsRef
+      .where("type", "==", "vtuLowBalance")
+      .where("resolved", "==", false)
+      .limit(1)
+      .get();
+
+    if (!existing.empty) return; // already alerted — don't spam
+
+    await alertsRef.add({
+      type: "vtuLowBalance",
+      resolved: false,
+      createdAt: new Date(),
+    });
+
+    const adminsSnap = await db.collection("users").where("isAdmin", "==", true).get();
+
+    await Promise.all(
+      adminsSnap.docs.map((doc) =>
+        exports.createNotification(doc.id, {
+          title: "⚠️ mySubwallet Balance Low",
+          body: "One or more VTU orders are queued because mySubwallet float ran out. Top up to release them.",
+          type: "adminAlert",
+        })
+      )
+    );
+  } catch (err) {
+    console.error("notifyAdminsLowVtuBalance error:", err);
+  }
+};
+
+// ─── ADMIN: CLEAR THE LOW-BALANCE ALERT ───────────────────────────────────
+// Call this once the pending queue is fully drained (from the retry job
+// or the manual "process now" trigger), so the next low-balance episode
+// raises a fresh alert instead of staying silenced forever.
+exports.markVtuLowBalanceResolved = async (db) => {
+  try {
+    const alertsRef = db.collection("adminAlerts");
+    const snap = await alertsRef
+      .where("type", "==", "vtuLowBalance")
+      .where("resolved", "==", false)
+      .get();
+
+    await Promise.all(
+      snap.docs.map((doc) => doc.ref.update({ resolved: true, resolvedAt: new Date() }))
+    );
+  } catch (err) {
+    console.error("markVtuLowBalanceResolved error:", err);
+  }
+};

@@ -16,17 +16,26 @@ const client = axios.create({
 const genRequestId = (prefix = "PE") =>
   `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
-// ── TEMP DIAGNOSTIC LOGGER ──────────────────────────────────────────────
-// Logs the full raw response (success or failure) so we can see exactly
-// what mySubwallet sends back for an insufficient-float failure vs a
-// normal failure (bad phone, invalid plan, etc). Remove once we've
-// captured real payloads and wired up proper branching logic.
 const logRemote = (label, payload) => {
   try {
     console.log(`[mySubwallet:${label}]`, JSON.stringify(payload, null, 2));
   } catch {
     console.log(`[mySubwallet:${label}]`, payload);
   }
+};
+
+// ── Insufficient float detection ────────────────────────────────────────
+// Confirmed shape: mySubwallet returns HTTP 403 with
+// { status: "fail", message: "Insufficient Account Balance. Kindly Fund
+// Your Wallet => ₦24.00" } when their float can't cover the purchase.
+// This is distinct from other failures (bad phone number, invalid plan,
+// etc), which return different messages/status codes — so we match on
+// both the 403 status AND the "insufficient" keyword to avoid false
+// positives from an unrelated 403 (e.g. auth issue).
+exports.isInsufficientBalanceError = (err) => {
+  const status = err.response?.status;
+  const message = (err.response?.data?.message || "").toLowerCase();
+  return status === 403 && message.includes("insufficient");
 };
 
 exports.buyAirtimeRemote = async ({ network, phone, amount, requestId, sandboxFail = false }) => {
@@ -39,7 +48,7 @@ exports.buyAirtimeRemote = async ({ network, phone, amount, requestId, sandboxFa
   } catch (err) {
     logRemote("buyAirtime ERROR status", err.response?.status || err.message);
     logRemote("buyAirtime ERROR body", err.response?.data || null);
-    throw err; // rethrow — existing requery fallback in vtuController still handles this
+    throw err;
   }
 };
 
@@ -64,13 +73,11 @@ exports.getDataPlansRemote = async () => {
 
 exports.getBalanceRemote = async () => {
   const { data } = await client.get("/api/balance");
-  logRemote("getBalance body", data);
   return data;
 };
 
 exports.requeryRemote = async (reference) => {
   const { data } = await client.get(`/api/requery/${reference}`);
-  logRemote("requery body", data);
   return data;
 };
 
