@@ -1,5 +1,6 @@
 const { getDb } = require("../config/firebase");
-
+const { Resend } = require("resend");
+const resend = new Resend(process.env.RESEND_API_KEY);
 // ─── GET USER NOTIFICATIONS ───────────────────────────────────────────────
 exports.getNotifications = async (req, res) => {
   try {
@@ -145,11 +146,11 @@ const sendPushNotification = async (pushToken, title, body, data = {}) => {
   }
 };
 
-// ─── ADMIN: NOTIFY LOW mySubwallet FLOAT (debounced) ──────────────────────
+// ─── ADMIN: NOTIFY LOW mySubwallet FLOAT (debounced, email only) ──────────
 // Call this every time a VTU order gets queued as pending_topup. It only
-// actually notifies admins once per "episode" — if an unresolved alert
+// actually emails admins once per "episode" — if an unresolved alert
 // already exists, this is a no-op, so many queued orders in a row don't
-// spam admins with repeat notifications.
+// spam admins with repeat emails.
 exports.notifyAdminsLowVtuBalance = async (db) => {
   try {
     const alertsRef = db.collection("adminAlerts");
@@ -168,14 +169,46 @@ exports.notifyAdminsLowVtuBalance = async (db) => {
     });
 
     const adminsSnap = await db.collection("users").where("isAdmin", "==", true).get();
+    const adminEmails = adminsSnap.docs
+      .map((doc) => doc.data().email)
+      .filter(Boolean);
+
+    if (adminEmails.length === 0) {
+      console.warn("notifyAdminsLowVtuBalance: no admin emails found to notify.");
+      return;
+    }
 
     await Promise.all(
-      adminsSnap.docs.map((doc) =>
-        exports.createNotification(doc.id, {
-          title: "⚠️ mySubwallet Balance Low",
-          body: "One or more VTU orders are queued because mySubwallet float ran out. Top up to release them.",
-          type: "adminAlert",
-        })
+      adminEmails.map((email) =>
+        resend.emails.send({
+          from: "PromoEarn <noreply@promoearnapp.com>",
+          to: email,
+          subject: "⚠️ mySubwallet Balance Low — PromoEarn Admin",
+          html: `
+            <div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:20px">
+              <div style="background:#DC2626;padding:20px;border-radius:12px 12px 0 0;text-align:center">
+                <h2 style="color:#fff;margin:0">PromoEarn Admin</h2>
+              </div>
+              <div style="background:#fff;padding:24px;border:1px solid #E2E8F0;border-top:none;border-radius:0 0 12px 12px">
+                <p style="font-size:15px;color:#0F172A;font-weight:700;">mySubwallet Balance Low</p>
+                <p style="font-size:14px;color:#374151;line-height:1.7;">
+                  One or more VTU (airtime/data) orders are queued because your mySubwallet float ran out.
+                  Users have already been charged and are waiting — top up your mySubwallet balance and
+                  process the pending queue to deliver these orders.
+                </p>
+                <div style="text-align:center;margin:24px 0;">
+                  <a href="https://promo-earn-admin.vercel.app"
+                     style="display:inline-block;background:#1E40AF;color:#fff;padding:14px 32px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;">
+                    👉 Open Admin Panel
+                  </a>
+                </div>
+                <p style="font-size:12px;color:#94A3B8;margin-top:16px;">
+                  You won't receive another alert for this issue until it's resolved, to avoid inbox spam.
+                </p>
+              </div>
+            </div>
+          `,
+        }).catch((err) => console.error(`Failed to email admin alert to ${email}:`, err.message))
       )
     );
   } catch (err) {

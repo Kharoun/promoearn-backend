@@ -16,7 +16,7 @@ const WITHDRAWAL_FEE = 200 / NGN_RATE;  // ₦200 = ~$0.133
 // const MIN_WITHDRAWAL = 98 / NGN_RATE;  // ~₦200, just for testing
 // const WITHDRAWAL_FEE = 20 / NGN_RATE;  // ₦200 = ~$0.133
 const PAYSTACK_SECRET  = process.env.PAYSTACK_SECRET_KEY;
-const ACTIVATION_LOCKED_BONUS = 3000 / NGN_RATE; // ₦3000 = $2.00, locked until first gift card is approved
+const ACTIVATION_LOCKED_BONUS = 5000 / NGN_RATE; // ₦5000 = $3.33, locked until first gift card is approved
 
 // ─── Helper: call Paystack API ────────────────────────────────────────────────
 const paystackRequest = (method, path, body) => {
