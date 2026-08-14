@@ -218,19 +218,11 @@ const activateUserFromPayment = async (db, userId) => {
   const user = { uid: userDoc.id, ...userDoc.data() };
   if (user.isActivated) return user;
 
-// AFTER
-await db.collection("users").doc(userId).update({
-  isActivated: true,
-  lockedBalance: (user.lockedBalance || 0) + ACTIVATION_LOCKED_BONUS,
-  pendingActivationRef: null,
-  updatedAt: new Date(),
-});
-
-await db.collection("transactions").add({
-  userId, type: "bonus_locked",
-  description: "Welcome bonus (locked — trade a gift card to unlock)",
-  amount: ACTIVATION_LOCKED_BONUS, status: "locked", createdAt: new Date(),
-});
+  await db.collection("users").doc(userId).update({
+    isActivated: true,
+    pendingActivationRef: null,
+    updatedAt: new Date(),
+  });
   await db.collection("transactions").add({
     userId, type: "registration", description: "Registration fee (Flutterwave)",
     amount: -REGISTRATION_FEE, status: "completed", createdAt: new Date(),
@@ -261,7 +253,7 @@ await db.collection("transactions").add({
 
   await createNotification(userId, {
     title: "🎉 Account Activated!",
-    body: `Welcome to PromoEarn! A $${ACTIVATION_LOCKED_BONUS.toFixed(2)} bonus has been added — it unlocks for withdrawal once your first gift card or in-app trade is approved.`,
+    body: `Welcome to PromoEarn! Your account is now fully active — start completing tasks to earn.`,
     type: "paymentAlerts",
   });
 
