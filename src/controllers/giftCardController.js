@@ -1,7 +1,8 @@
 const { getDb } = require("../config/firebase");
 const admin = require("firebase-admin");
 const { uploadBuffer } = require("../utils/cloudinary"); // add this near your other requires at the top of the file
-
+const { Resend } = require("resend");
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 // ─── PUBLIC: Get active rates ──────────────────────────────────────────────
 exports.getRates = async (req, res) => {
@@ -95,6 +96,39 @@ exports.submitGiftCard = async (req, res) => {
       read: false,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
+
+    // Notify admin by email
+    resend.emails.send({
+      from: "PromoEarn <noreply@promoearnapp.com>",
+      to: "contact.promoearn@gmail.com",
+      subject: `🎁 New Gift Card Submission — ${brand}`,
+      html: `
+        <div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:20px">
+          <div style="background:#1E40AF;padding:20px;border-radius:12px 12px 0 0;text-align:center">
+            <h2 style="color:#fff;margin:0">PromoEarn Admin</h2>
+          </div>
+          <div style="background:#fff;padding:28px;border:1px solid #E2E8F0;border-top:none;border-radius:0 0 12px 12px">
+            <p style="font-size:15px;color:#0F172A">A user has submitted a gift card for review.</p>
+            <div style="background:#EFF6FF;border-radius:10px;padding:16px;margin:16px 0;font-size:14px;color:#0F172A;line-height:1.9;">
+              <p style="margin:0;"><strong>Username:</strong> @${user.username || "N/A"}</p>
+              <p style="margin:0;"><strong>Email:</strong> ${user.email || "N/A"}</p>
+              <p style="margin:0;"><strong>Brand:</strong> ${brand}</p>
+              <p style="margin:0;"><strong>Card Type:</strong> ${cardType}</p>
+              <p style="margin:0;"><strong>Country:</strong> ${country}</p>
+              <p style="margin:0;"><strong>Face Value:</strong> $${face}</p>
+              <p style="margin:0;"><strong>Quoted Amount:</strong> $${quotedAmount}</p>
+              <p style="margin:0;"><strong>Submitted:</strong> ${new Date().toLocaleString("en-NG", { timeZone: "Africa/Lagos" })} (WAT)</p>
+            </div>
+            <div style="text-align:center;margin:24px 0;">
+              <a href="https://promo-earn-admin.vercel.app"
+                 style="display:inline-block;background:#1E40AF;color:#fff;padding:14px 32px;border-radius:10px;text-decoration:none;font-weight:700;font-size:15px;">
+                👉 Review in Admin Panel
+              </a>
+            </div>
+          </div>
+        </div>
+      `,
+    }).catch((err) => console.error("Gift card admin email failed:", err));
 
     // Notify the user their submission was received
     await db.collection("notifications").add({
