@@ -7,7 +7,7 @@ const { Resend } = require('resend');
 const resend = new Resend(process.env.RESEND_API_KEY);
 // ─── Constants ────────────────────────────────────────────────────────────────
 const NGN_RATE         = 1500;
-const REGISTRATION_FEE = 100 / NGN_RATE;  // TEST MODE: ₦100
+const REGISTRATION_FEE = 4500 / NGN_RATE;  // = $3.00
 const WELCOME_BONUS    = 0;
 const TASK_REWARD      = 0.17;
 const REFERRAL_BONUS   = 1.33;
@@ -190,7 +190,7 @@ exports.createCheckout = async (req, res) => {
 
     const { data } = await flw.post("/payments", {
       tx_ref,
-      amount: 100,
+      amount: 4500,
       currency: "NGN",
       redirect_url: `${process.env.CLIENT_URL}/payment-success`,
       customer: { email, name: `${user.firstName || ""} ${user.lastName || ""}`.trim() || email },
