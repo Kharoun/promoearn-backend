@@ -7,7 +7,7 @@ const { Resend } = require('resend');
 const resend = new Resend(process.env.RESEND_API_KEY);
 // ─── Constants ────────────────────────────────────────────────────────────────
 const NGN_RATE         = 1500;
-const REGISTRATION_FEE = 4500 / NGN_RATE;  // = $3.00
+const REGISTRATION_FEE = 100 / NGN_RATE;  // TEST MODE: ₦100
 const WELCOME_BONUS    = 0;
 const TASK_REWARD      = 0.17;
 const REFERRAL_BONUS   = 1.33;
@@ -190,7 +190,7 @@ exports.createCheckout = async (req, res) => {
 
     const { data } = await flw.post("/payments", {
       tx_ref,
-      amount: 4500,
+      amount: 100,
       currency: "NGN",
       redirect_url: `${process.env.CLIENT_URL}/payment-success`,
       customer: { email, name: `${user.firstName || ""} ${user.lastName || ""}`.trim() || email },
@@ -299,19 +299,43 @@ const settleFlutterwaveTransaction = async (db, txData) => {
   throw new Error("Unrecognized payment purpose in Flutterwave meta");
 };
 // ─── VERIFY PAYMENT & ACTIVATE ACCOUNT ───────────────────────────────────────
+// ─── VERIFY PAYMENT & ACTIVATE ACCOUNT ───────────────────────────────────────
 exports.verifyPayment = async (req, res) => {
   try {
     const { reference } = req.body;
-    const db = getDb();
+    const db  = getDb();
+    const uid = req.user?.uid;
 
     const { data: verifyRes } = await flw.get(
       `/transactions/verify_by_reference?tx_ref=${encodeURIComponent(reference)}`
     );
+
+    console.log("FLW verify response:", JSON.stringify(verifyRes));
+
     if (verifyRes.status !== "success" || verifyRes.data.status !== "successful") {
       return res.status(400).json({ success: false, message: "Payment not completed yet." });
     }
 
-    const outcome = await settleFlutterwaveTransaction(db, verifyRes.data);
+    let outcome;
+    try {
+      outcome = await settleFlutterwaveTransaction(db, verifyRes.data);
+    } catch (settleErr) {
+      console.error("settleFlutterwaveTransaction failed, trying fallback:", settleErr.message);
+
+      // Fallback: Flutterwave doesn't always echo `meta` back on verify.
+      // Trust the reference if it matches this authenticated user's own
+      // pending activation/reactivation ref instead of relying on meta.
+      if (uid) {
+        const userDoc = await db.collection("users").doc(uid).get();
+        const user = userDoc.exists ? userDoc.data() : null;
+        if (user?.pendingActivationRef === reference) {
+          outcome = { purpose: "activation", result: await activateUserFromPayment(db, uid) };
+        } else if (user?.pendingReactivationRef === reference) {
+          outcome = { purpose: "reactivation", result: await reactivateUserFromPayment(db, uid) };
+        }
+      }
+      if (!outcome) throw settleErr;
+    }
 
     if (outcome.purpose === "activation") {
       return res.status(200).json({
@@ -505,6 +529,23 @@ exports.flutterwaveWebhook = async (req, res) => {
           console.log("✅ FLW webhook settled charge", event.data.id);
         } catch (e) {
           console.error("Settle error:", e.message);
+
+          // Fallback: look up the user by the tx_ref stored on their doc
+          // instead of relying on Flutterwave echoing back `meta`.
+          const txRef = verifyRes.data.tx_ref || event.data.tx_ref;
+          if (txRef) {
+            const actSnap = await db.collection("users").where("pendingActivationRef", "==", txRef).limit(1).get();
+            if (!actSnap.empty) {
+              await activateUserFromPayment(db, actSnap.docs[0].id);
+              console.log("✅ FLW webhook fallback-activated user via tx_ref", txRef);
+            } else {
+              const reactSnap = await db.collection("users").where("pendingReactivationRef", "==", txRef).limit(1).get();
+              if (!reactSnap.empty) {
+                await reactivateUserFromPayment(db, reactSnap.docs[0].id);
+                console.log("✅ FLW webhook fallback-reactivated user via tx_ref", txRef);
+              }
+            }
+          }
         }
       }
     }
