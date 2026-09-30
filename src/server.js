@@ -7,6 +7,7 @@ const morgan = require("morgan");
 const { initFirebase } = require("./config/firebase");
 const authRoutes = require("./routes/authRoutes");
 const { startVtuQueuePoller } = require("./cron/vtuQueuePoller");
+const { startBoostSyncJob } = require("./jobs/boostSyncJob");          // ← BOOST
 
 
 // ─── Initialize Firebase ──────────────────────────────────────────────────────
@@ -94,6 +95,7 @@ const userRoutes          = require("./routes/userRoutes");
 const notificationsRoutes = require("./routes/notificationsRoutes");
 const campaignsRoutes     = require("./routes/campaigns");
 const taskProofRoutes     = require("./routes/taskProofRoutes");
+const boostRoutes         = require("./routes/boostRoutes");           // ← BOOST
 
 app.use("/api/v1/auth",         authRoutes);
 app.use("/api/v1/admin",        adminRoutes);
@@ -104,6 +106,7 @@ app.use("/api/v1/admin",        campaignsRoutes);  // ← add this line
 // app.use("/api/v1",              userRoutes);
 // app.use("/api/v1/admin",        campaignsRoutes);
 app.use("/api/v1/tasks",        taskProofRoutes);
+app.use("/api/v1/boost",        boostRoutes);      // ← BOOST (must be BEFORE the userRoutes catch-all)
 app.use("/api/v1",              userRoutes);   // ← must be LAST (it's a catch-all)
 
 // ─── 404 Handler ──────────────────────────────────────────────────────────────
@@ -146,4 +149,5 @@ app.listen(PORT, () => {
 });
 
 startVtuQueuePoller();
+startBoostSyncJob();                                                    // ← BOOST
 module.exports = app;
