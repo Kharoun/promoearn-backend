@@ -28,7 +28,16 @@ const {
 
 // All routes protected by adminMiddleware
 router.use(adminMiddleware);
-
+const boost = require("../controllers/boostController");
+router.get("/boost/config",            boost.adminGetConfig);
+router.post("/boost/config",           boost.adminUpdateConfig);
+router.get("/boost/balance",           boost.adminGetBalance);
+router.post("/boost/sync-services",    boost.adminSyncServices);
+router.get("/boost/services",          boost.adminGetServices);
+router.put("/boost/services/:id",      boost.adminUpdateService);
+router.get("/boost/orders",            boost.adminGetOrders);
+router.post("/boost/orders/:id/refund", boost.adminRefundOrder);
+router.post("/boost/orders/:id/attach", boost.adminAttachOrder);
 const {
   getConfigAdmin: getIntlConfigAdmin, updateConfig: updateIntlConfig,
   getWithdrawalsAdmin, processWithdrawalAdmin,
