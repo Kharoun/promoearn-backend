@@ -6,7 +6,7 @@
  *                  adminRefundOrder, adminAttachOrder
  */
 const { getDb } = require("../config/firebase");
-const provider = require("../utils/smmProvider ");
+const provider = require("../utils/smmProvider");
 const { checkVersionGate } = require("../utils/versionCheck");
 const { createNotification } = require("./notificationsController");
 const {
