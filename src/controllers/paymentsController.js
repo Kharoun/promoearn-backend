@@ -288,6 +288,10 @@ const reactivateUserFromPayment = async (db, userId) => {
 
 const settleFlutterwaveTransaction = async (db, txData) => {
   const meta = txData.meta || {};
+  if (String(txData.tx_ref || "").startsWith("PE-BOOST-")) {
+    const { settleBoostPayment } = require("./boostController");
+    return { purpose: "boost", result: await settleBoostPayment(txData) };
+  }
   if (meta.purpose === "activation" && meta.userId) {
     return { purpose: "activation", result: await activateUserFromPayment(db, meta.userId) };
   }

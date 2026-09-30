@@ -5,7 +5,13 @@
 const express = require("express");
 const jwt = require("jsonwebtoken");
 const router = express.Router();
-const { listServices, createOrder, listMyOrders } = require("../controllers/boostController");
+const {
+  listServices,
+  createOrder,
+  createCardOrder,
+  verifyCardOrder,
+  listMyOrders,
+} = require("../controllers/boostController");
 
 // Same JWT check used in campaignRoutes.js
 const verifyToken = (req, res, next) => {
@@ -21,8 +27,10 @@ const verifyToken = (req, res, next) => {
   }
 };
 
-router.get("/services", verifyToken, listServices);
-router.post("/order",   verifyToken, createOrder);
-router.get("/orders",   verifyToken, listMyOrders);
+router.get("/services",          verifyToken, listServices);
+router.post("/order",            verifyToken, createOrder);           // pay from balance
+router.post("/order/card",       verifyToken, createCardOrder);       // start Flutterwave checkout
+router.post("/order/card/verify", verifyToken, verifyCardOrder);      // confirm after checkout
+router.get("/orders",            verifyToken, listMyOrders);
 
 module.exports = router;
