@@ -286,19 +286,52 @@ const reactivateUserFromPayment = async (db, userId) => {
   return { ...user, isBanned: false };
 };
 
+const settleCampaignPayment = async (db, txData) => {
+  const snap = await db.collection("campaigns")
+    .where("paymentRef", "==", txData.tx_ref).limit(1).get();
+  if (snap.empty) throw new Error("Campaign not found for this payment");
+
+  const ref = snap.docs[0].ref;
+  const c   = snap.docs[0].data();
+
+  if (txData.currency !== "NGN" || Number(txData.amount) < Number(c.amountNGN || 0)) {
+    throw new Error("Payment amount mismatch");
+  }
+
+  const justPaid = await db.runTransaction(async (t) => {
+    const s = await t.get(ref);
+    if (s.data().paymentStatus === "paid") return false;       // verify + webhook both fire
+    t.update(ref, {
+      status: "paid", paymentStatus: "paid",
+      paidAt: new Date(), updatedAt: new Date(),
+    });
+    return true;
+  });
+
+  if (justPaid) {
+    await createNotification(c.submittedBy, {
+      title: "📢 Payment Received",
+      body: `We received your payment for "${c.brandName}". It's now in review.`,
+      type: "paymentAlerts",
+    });
+  }
+  return { campaignId: ref.id };
+};
+
 const settleFlutterwaveTransaction = async (db, txData) => {
   const meta = txData.meta || {};
   if (String(txData.tx_ref || "").startsWith("PE-BOOST-")) {
     const { settleBoostPayment } = require("./boostController");
     return { purpose: "boost", result: await settleBoostPayment(txData) };
   }
+  if (String(txData.tx_ref || "").startsWith("PE-CAMP-")) {
+    return { purpose: "campaign", result: await settleCampaignPayment(db, txData) };
+  }
   if (meta.purpose === "activation" && meta.userId) {
     return { purpose: "activation", result: await activateUserFromPayment(db, meta.userId) };
   }
   if (meta.purpose === "reactivation" && meta.userId) {
     return { purpose: "reactivation", result: await reactivateUserFromPayment(db, meta.userId) };
-  }
-  if (meta.purpose === "campaign" && meta.campaignId) {
   }
   throw new Error("Unrecognized payment purpose in Flutterwave meta");
 };
@@ -601,156 +634,9 @@ exports.flutterwaveWebhook = async (req, res) => {
   }
 };
 
-// ─── VALIDATE REACTIVATION TOKEN ─────────────────────────────────────────────
-exports.validateReactivationToken = async (req, res) => {
-  try {
-    const { token, email } = req.query;
-    const db     = getDb();
-    const crypto = require('crypto');
-
-    if (!token || !email) {
-      return res.status(400).json({ success: false, message: 'Invalid link.' });
-    }
-
-    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-
-    const snap = await db.collection('users')
-      .where('email', '==', email.toLowerCase())
-      .limit(1).get();
-
-    if (snap.empty) {
-      return res.status(404).json({ success: false, message: 'Account not found.' });
-    }
-
-    const user = snap.docs[0].data();
-    const uid  = snap.docs[0].id;
-
-    if (user.reactivationToken !== tokenHash) {
-      return res.status(400).json({ success: false, message: 'Invalid or already used link.' });
-    }
-
-    const expiry = user.reactivationTokenExpiry?._seconds
-      ? new Date(user.reactivationTokenExpiry._seconds * 1000)
-      : new Date(user.reactivationTokenExpiry);
-
-    if (new Date() > expiry) {
-      return res.status(400).json({ success: false, message: 'This link has expired. Please contact support.' });
-    }
-
-    if (!user.isBanned) {
-      return res.status(400).json({ success: false, message: 'Account is already active.' });
-    }
-
-    return res.status(200).json({
-      success: true,
-      data: { uid, email: user.email, firstName: user.firstName },
-    });
-  } catch (err) {
-    console.error('Validate reactivation token error:', err);
-    return res.status(500).json({ success: false, message: 'Failed to validate link.' });
-  }
-};
-
-// ─── REQUEST REACTIVATION (manual — Paystack disabled) ────────────────────────
-exports.requestReactivation = async (req, res) => {
-  try {
-    const { token, email, senderName } = req.body;
-    const db     = getDb();
-    const crypto = require('crypto');
-
-    if (!token || !email) {
-      return res.status(400).json({ success: false, message: 'Invalid request.' });
-    }
-
-    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
-
-    const snap = await db.collection('users')
-      .where('email', '==', email.toLowerCase())
-      .limit(1).get();
-
-    if (snap.empty) return res.status(404).json({ success: false, message: 'Account not found.' });
-
-    const user = snap.docs[0].data();
-    const uid  = snap.docs[0].id;
-
-    if (user.reactivationToken !== tokenHash) {
-      return res.status(400).json({ success: false, message: 'Invalid or expired link.' });
-    }
-    if (!user.isBanned) {
-      return res.status(400).json({ success: false, message: 'Account is already active.' });
-    }
-
-    // Prevent duplicate pending requests
-    const existing = await db.collection('reactivations')
-      .where('userId', '==', uid).where('status', '==', 'pending').limit(1).get();
-    if (!existing.empty) {
-      return res.status(400).json({ success: false, message: 'You already have a pending reactivation request.' });
-    }
-
-    // Save reactivation request
-    await db.collection('reactivations').add({
-      userId:     uid,
-      email:      user.email,
-      username:   user.username   || '',
-      firstName:  user.firstName  || '',
-      senderName: senderName      || '',
-      status:     'pending',
-      createdAt:  new Date(),
-      updatedAt:  new Date(),
-    });
-
-    // Notify admin
-    const adminEmail = process.env.ADMIN_EMAIL || 'contact.promoearn@gmail.com';
-    await resend.emails.send({
-      from:    'PromoEarn <noreply@promoearnapp.com>',
-      to:      adminEmail,
-      subject: `💳 Reactivation Request — ${user.firstName || user.email}`,
-      html: `
-        <div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:20px">
-          <div style="background:#1A56DB;padding:20px;border-radius:12px 12px 0 0;text-align:center">
-            <h2 style="color:#fff;margin:0">PromoEarn Admin</h2>
-          </div>
-          <div style="background:#fff;padding:24px;border:1px solid #E2E8F0;border-top:none;border-radius:0 0 12px 12px">
-            <p style="font-size:15px;color:#0F172A;font-weight:700;">New Reactivation Request</p>
-            <table style="width:100%;border-collapse:collapse;font-size:14px;">
-              <tr><td style="padding:8px 0;color:#64748B;">User</td><td style="font-weight:700;">${user.firstName || ''} (@${user.username || user.email})</td></tr>
-              <tr><td style="padding:8px 0;color:#64748B;">Email</td><td>${user.email}</td></tr>
-              <tr><td style="padding:8px 0;color:#64748B;">Sender Name</td><td style="font-weight:700;color:#1A56DB;">${senderName || '(not provided)'}</td></tr>
-              <tr><td style="padding:8px 0;color:#64748B;">Amount</td><td style="font-weight:700;color:#16A34A;">₦1,000</td></tr>
-            </table>
-            <p style="font-size:13px;color:#64748B;margin-top:16px;">Go to the admin panel → Reactivations to approve or reject.</p>
-          </div>
-        </div>
-      `,
-    });
-
-    return res.status(200).json({
-      success: true,
-      message: 'Request submitted! Your account will be reviewed within 24 hours.',
-    });
-  } catch (err) {
-    console.error('Request reactivation error:', err);
-    return res.status(500).json({ success: false, message: 'Failed to submit reactivation request.' });
-  }
-};
 
 
-// ─── GET TRANSACTIONS ─────────────────────────────────────────────────────────
-exports.getTransactions = async (req, res) => {
-  try {
-    const db  = getDb();
-    const uid = req.user.uid;
-    const snap = await db.collection("transactions")
-      .where("userId", "==", uid)
-      .orderBy("createdAt", "desc")
-      .get();
-    const transactions = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-    return res.json({ success: true, data: { transactions } });
-  } catch (err) {
-    console.error("Get transactions error:", err);
-    return res.status(500).json({ success: false, message: "Failed to fetch transactions." });
-  }
-};
+
 
 // ─── REACTIVATION ─────────────────────────────────────────────────────────────
 exports.validateReactivationToken = async (req, res) => {

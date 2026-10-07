@@ -519,59 +519,109 @@ exports.processReactivation = async (req, res) => {
     return res.status(500).json({ success: false, message: "Server error." });
   }
 };
-// ─── UPDATE CAMPAIGN STATUS ───────────────────────────────────────────────────
+
 exports.updateCampaignStatus = async (req, res) => {
   try {
-    const { id }                = req.params;
+    const { id } = req.params;
     const { status, adminNote } = req.body;
     const db = getDb();
 
-    const validStatuses = ["approved", "rejected", "live", "completed"];
-    if (!validStatuses.includes(status)) {
-      return res.status(400).json({ success: false, message: `Invalid status. Must be one of: ${validStatuses.join(", ")}` });
+    const allowedFrom = {
+      approved:  ["paid", "pending_payment_review"],
+      rejected:  ["paid", "pending_payment_review", "pending_payment", "approved"],
+      live:      ["approved"],
+      completed: ["live"],
+    };
+    if (!allowedFrom[status]) {
+      return res.status(400).json({ success: false, message: "Invalid status." });
     }
 
-    const campaignDoc = await db.collection("campaigns").doc(id).get();
-    if (!campaignDoc.exists) {
-      return res.status(404).json({ success: false, message: "Campaign not found." });
-    }
+    const ref = db.collection("campaigns").doc(id);
+    let campaign, refunded = 0, refundPending = false;
 
-    const update = { status, updatedAt: new Date() };
-    if (adminNote !== undefined) update.adminNote  = adminNote;
-    if (status === "live")       update.liveAt      = new Date();
-    if (status === "completed")  update.completedAt = new Date();
+    await db.runTransaction(async (t) => {
+      const snap = await t.get(ref);                       // ── reads
+      if (!snap.exists) throw Object.assign(new Error("Campaign not found."), { http: 404 });
+      campaign = snap.data();
 
-    await db.collection("campaigns").doc(id).update(update);
-
-    // Notify the campaign owner
-    const campaign = campaignDoc.data();
-    const ownerId  = campaign.submittedBy;
-    if (ownerId) {
-      const messages = {
-        approved:  { title: "🎉 Campaign Approved!", body: `Your campaign "${campaign.brandName}" has been approved and will go live soon.` },
-        rejected:  { title: "❌ Campaign Rejected",  body: `Your campaign "${campaign.brandName}" was rejected.${adminNote ? ` Reason: ${adminNote}` : ""}` },
-        live:      { title: "🚀 Campaign is Live!",  body: `Your campaign "${campaign.brandName}" is now live and earning for you.` },
-        completed: { title: "✅ Campaign Completed", body: `Your campaign "${campaign.brandName}" has completed its run.` },
-      };
-      const msg = messages[status];
-      if (msg) {
-        await db.collection("notifications").add({
-          userId:    ownerId,
-          title:     msg.title,
-          message:   msg.body,
-          type:      "campaign",
-          read:      false,
-          createdAt: new Date(),
-        });
+      if (!allowedFrom[status].includes(campaign.status)) {
+        throw Object.assign(
+          new Error(`Can't move a campaign from "${campaign.status}" to "${status}".`),
+          { http: 400 }
+        );
       }
+
+      const paid = campaign.paymentStatus === "paid" && !campaign.refundedAt;
+      const refundToBalance = status === "rejected" && paid && campaign.paymentMethod === "balance";
+      let userSnap = null;
+      if (refundToBalance) userSnap = await t.get(db.collection("users").doc(campaign.submittedBy));
+
+      const update = { status, updatedAt: new Date() };   // ── writes
+      if (adminNote !== undefined) update.adminNote = adminNote;
+      if (status === "live")      update.liveAt = new Date();
+      if (status === "completed") update.completedAt = new Date();
+      if (status === "approved" && campaign.status === "pending_payment_review") {
+        update.paymentStatus = "paid";     // manual transfer confirmed by admin
+      }
+
+      if (refundToBalance && userSnap?.exists) {
+        refunded = campaign.amountUSD || 0;
+        t.update(userSnap.ref, {
+          balance: Math.round(((userSnap.data().balance || 0) + refunded) * 100) / 100,
+          updatedAt: new Date(),
+        });
+        t.set(db.collection("transactions").doc(), {
+          userId: campaign.submittedBy, type: "refund",
+          description: `Refund: ad "${campaign.brandName}" rejected`,
+          amount: refunded, status: "completed",
+          campaignId: id, createdAt: new Date(),
+        });
+        update.paymentStatus = "refunded";
+        update.refundedAt = new Date();
+      } else if (status === "rejected" && paid) {
+        refundPending = true;              // paid by card/transfer → refund manually
+        update.refundPending = true;
+      }
+
+      t.update(ref, update);
+    });
+
+    const ownerId = campaign.submittedBy;
+    if (ownerId) {
+      const name = campaign.brandName;
+      const messages = {
+        approved:  { title: "🎉 Campaign Approved!", body: `Your campaign "${name}" has been approved and will go live soon.` },
+        rejected:  { title: "❌ Campaign Rejected",  body: `Your campaign "${name}" was rejected.${adminNote ? ` Reason: ${adminNote}` : ""}${refunded ? ` $${refunded.toFixed(2)} has been refunded to your balance.` : ""}` },
+        live:      { title: "🚀 Campaign is Live!",  body: `Your campaign "${name}" is now live.` },
+        completed: { title: "✅ Campaign Completed", body: `Your campaign "${name}" has completed its run.` },
+      };
+      await createNotification(ownerId, { ...messages[status], type: "paymentAlerts" }).catch(() => {});
     }
 
-    return res.json({ success: true, message: `Campaign ${status}.` });
+    return res.json({
+      success: true,
+      message: `Campaign ${status}.${refunded ? " Balance refunded." : ""}${refundPending ? " Paid by card/transfer — refund manually." : ""}`,
+    });
   } catch (err) {
+    if (err.http) return res.status(err.http).json({ success: false, message: err.message });
     console.error("Update campaign status error:", err);
     return res.status(500).json({ success: false, message: "Server error." });
   }
 };
+
+exports.getCampaignsAdmin = async (req, res) => {
+  try {
+    const snap = await getDb().collection("campaigns").get();
+    const campaigns = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => (b.createdAt?._seconds || 0) - (a.createdAt?._seconds || 0));
+    return res.json({ success: true, data: { campaigns } });
+  } catch (err) {
+    console.error("Admin campaigns error:", err);
+    return res.status(500).json({ success: false, message: "Server error." });
+  }
+};
+
 // ─── TASK SUBMISSIONS (Proof Review) ─────────────────────────────────────────
 
 exports.getTaskSubmissions = async (req, res) => {

@@ -9,6 +9,23 @@ const { flw } = require("../utils/flutterwave");
 const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY;
 const db = admin.firestore();
 
+const { createNotification } = require("../controllers/notificationsController");
+
+const NGN_RATE = 1500;
+const PRICE_PER_SLOT = 0.013;
+const FEE_PCT = 0.15;
+const HIDDEN_FEE = 0.67;
+const MIN_SLOTS = 100;
+const ALLOWED_TYPES = ["likes","followers","views","signup","comments","shares","downloads","clicks"];
+const r2 = (n) => Math.round(n * 100) / 100;
+
+const priceFor = (slots) => {
+  const base = r2(PRICE_PER_SLOT * slots * (1 + FEE_PCT)); // goes in quotedTotal
+  const total = r2(base + HIDDEN_FEE);                     // what the advertiser pays (USD)
+  return { base, total };
+};
+const fail = (status, message) => Object.assign(new Error(message), { client: true, status });
+
 // ── Built-in token verification ────────────────────────────────────────────
 const jwt = require("jsonwebtoken");
 
@@ -31,52 +48,107 @@ const verifyToken = (req, res, next) => {
 // ✅ Version check (same logic as userController) ────────────────────────────
 const { checkVersionGate } = require("../utils/versionCheck"); // adjust path to wherever versionCheck.js actually lives
 
-// POST /api/v1/campaigns/submit
 router.post("/submit", verifyToken, async (req, res) => {
   try {
     const gateResult = await checkVersionGate(req, getDb);
     if (gateResult) return res.status(gateResult.status).json(gateResult.body);
 
     const {
-      brandName, taskType, targetCount, slots, pageLink,
-      description, mediaNote, contactEmail,
-      mediaUrls, mediaCount, quotedTotal, quotedPerUser,
-      submittedBy, userDisplayName, userEmail, userUsername,
+      brandName, taskType, pageLink, description, mediaNote, contactEmail,
+      mediaUrls, mediaCount, userDisplayName, userUsername, payWith,
     } = req.body;
+    const uid   = req.user.uid;                 // never trust the body for this
+    const slots = parseInt(req.body.slots) || 0;
 
-    if (!brandName || !taskType || !slots || !pageLink || !contactEmail) {
+    if (!brandName || !taskType || !pageLink || !contactEmail)
       return res.status(400).json({ success: false, message: "Missing required fields." });
+    if (!ALLOWED_TYPES.includes(taskType))
+      return res.status(400).json({ success: false, message: "Invalid goal." });
+    if (slots < MIN_SLOTS)
+      return res.status(400).json({ success: false, message: `Minimum is ${MIN_SLOTS} people.` });
+
+    const { base, total } = priceFor(slots);          // server-side price
+    const campaignRef = db.collection("campaigns").doc();
+    const tx_ref = `PE-CAMP-${campaignRef.id}-${Date.now()}`;
+
+    const campaignDoc = {
+      id: campaignRef.id,
+      brandName, taskType, slots,
+      targetCount: 0,
+      pageLink,
+      description: description || "",
+      mediaNote: mediaNote || "",
+      contactEmail,
+      mediaUrls: mediaUrls || [],
+      mediaCount: mediaCount || 0,
+      quotedTotal: base,
+      quotedPerUser: PRICE_PER_SLOT,
+      amountUSD: total,
+      submittedBy: uid,
+      userDisplayName: userDisplayName || "Unknown",
+      userEmail: req.user?.email || req.body.userEmail || "",
+      userUsername: userUsername || "",
+      adType: req.body.adType || "business",
+      businessCategory: req.body.businessCategory || "",
+      platform: req.body.platform || "",
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    // ───────── PAY FROM BALANCE ─────────
+    if (payWith === "balance") {
+      const userRef = db.collection("users").doc(uid);
+      const txRef   = db.collection("transactions").doc();
+      let newBalance = 0;
+
+      await db.runTransaction(async (t) => {
+        const snap = await t.get(userRef);               // reads first…
+        if (!snap.exists) throw fail(404, "User not found.");
+        const u = snap.data();
+        if (u.isBanned) throw fail(403, "Account suspended.");
+        const bal = u.balance || 0;
+        if (bal + 0.000001 < total) throw fail(400, "Insufficient balance.");
+
+        newBalance = r2(bal - total);
+        t.update(userRef, { balance: newBalance, updatedAt: new Date() });   // …then writes
+        t.set(campaignRef, {
+          ...campaignDoc,
+          status: "paid",
+          paymentStatus: "paid",
+          paymentMethod: "balance",
+          paymentRef: `BAL-${campaignRef.id}`,
+          paidAt: new Date(),
+        });
+        t.set(txRef, {
+          userId: uid, type: "campaign",
+          description: `Ad payment: ${brandName}`,
+          amount: -total, status: "completed",
+          campaignId: campaignRef.id, createdAt: new Date(),
+        });
+      });
+
+      await createNotification(uid, {
+        title: "📢 Ad Submitted",
+        body: `$${total.toFixed(2)} was paid from your balance for "${brandName}". It's now in review.`,
+        type: "paymentAlerts",
+      }).catch(() => {});
+
+      return res.json({
+        success: true,
+        data: { campaignId: campaignRef.id, paid: true, newBalance },
+      });
     }
 
-    const campaignRef = db.collection("campaigns").doc();
+    // ───────── PAY WITH FLUTTERWAVE ─────────
+    const amountNGN = Math.round(total * NGN_RATE) + 200;
     await campaignRef.set({
-      id:              campaignRef.id,
-      brandName, taskType,
-      targetCount:     parseInt(targetCount) || 0,
-      slots:           parseInt(slots),
-      pageLink,
-      description:     description || "",
-      mediaNote:       mediaNote || "",
-      contactEmail,
-      mediaUrls:       mediaUrls || [],
-      mediaCount:      mediaCount || 0,
-      quotedTotal:     parseFloat(quotedTotal) || 0,
-      quotedPerUser:   parseFloat(quotedPerUser) || 0,
-      status:          "pending_payment",
-      paymentStatus:   "unpaid",
-      submittedBy:     submittedBy || req.user?.uid || "",
-      userDisplayName: userDisplayName || "Unknown",
-      userEmail:       userEmail || req.user?.email || "",
-      userUsername:    userUsername || "",
-      createdAt:       admin.firestore.FieldValue.serverTimestamp(),
-      updatedAt:       admin.firestore.FieldValue.serverTimestamp(),
+      ...campaignDoc,
+      status: "pending_payment",
+      paymentStatus: "unpaid",
+      paymentMethod: "flutterwave",
+      paymentRef: tx_ref,            // saved BEFORE checkout so settlement can find it
+      amountNGN,
     });
-
-    const HIDDEN_FEE = 0.67;
-    const NGN_RATE   = 1500;
-    const totalUSD   = (parseFloat(quotedTotal) || 0) + HIDDEN_FEE;
-    const amountNGN  = Math.round(totalUSD * NGN_RATE) + 200;
-    const tx_ref     = `PE-CAMP-${campaignRef.id}-${Date.now()}`;
 
     const { data } = await flw.post("/payments", {
       tx_ref,
@@ -93,32 +165,18 @@ router.post("/submit", verifyToken, async (req, res) => {
       return res.status(400).json({ success: false, message: data.message || "Failed to start payment." });
     }
 
-    await campaignRef.update({ paymentRef: tx_ref, amountNGN });
-
     return res.json({
       success: true,
       data: { campaignId: campaignRef.id, checkoutUrl: data.data.link, reference: tx_ref },
     });
   } catch (err) {
+    if (err.client) return res.status(err.status).json({ success: false, message: err.message });
     console.error("Campaign submit error:", err.response?.data || err.message);
     return res.status(500).json({ success: false, message: "Server error." });
   }
 });
 
 
-// GET /api/v1/admin/campaigns
-router.get(["/campaigns", "/"], verifyToken, async (req, res) => {
-  try {
-    const snapshot = await db.collection("campaigns").get();
-    const campaigns = snapshot.docs
-      .map(doc => ({ id: doc.id, ...doc.data() }))
-      .sort((a, b) => (b.createdAt?._seconds ?? 0) - (a.createdAt?._seconds ?? 0));
-    return res.json({ success: true, data: { campaigns } });
-  } catch (err) {
-    console.error("Admin campaigns error:", err);
-    return res.status(500).json({ success: false, message: "Server error." });
-  }
-});
 
 // GET /api/v1/campaigns/my
 router.get("/my", verifyToken, async (req, res) => {

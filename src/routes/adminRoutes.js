@@ -9,7 +9,7 @@ const {
   getPayments, processPayment,
   getReferrals,
   getReactivations, processReactivation,
-  updateCampaignStatus,
+  updateCampaignStatus, getCampaignsAdmin,
   getTaskSubmissions, processTaskSubmission, 
 } = require("../controllers/adminController");
 const {
@@ -91,6 +91,7 @@ router.get("/payments", getPayments);
 router.put("/payments/:id", processPayment);
 
 router.patch("/campaigns/:id/status", updateCampaignStatus);
+router.get("/campaigns", getCampaignsAdmin);
 
 // Reactivations
 router.get("/reactivations",       getReactivations);
