@@ -18,6 +18,13 @@ const WITHDRAWAL_FEE = 200 / NGN_RATE;  // ₦200 = ~$0.133
 const PAYSTACK_SECRET  = process.env.PAYSTACK_SECRET_KEY;
 const ACTIVATION_LOCKED_BONUS = 5000 / NGN_RATE; // ₦5000 = $3.33, locked until first gift card is approved
 
+const ACTIVATION_NGN   = Number(process.env.ACTIVATION_NGN)   || 4500;
+const REACTIVATION_NGN = Number(process.env.REACTIVATION_NGN) || 1000;
+
+const uidFromRef = (txRef, prefix) => {
+  const m = new RegExp(`^${prefix}(.+)-\\d{10,}$`).exec(String(txRef || ""));
+  return m ? m[1] : null;
+};
 // ─── Helper: call Paystack API ────────────────────────────────────────────────
 const paystackRequest = (method, path, body) => {
   return new Promise((resolve, reject) => {
@@ -190,7 +197,7 @@ exports.createCheckout = async (req, res) => {
 
     const { data } = await flw.post("/payments", {
       tx_ref,
-      amount: 4500,
+      amount: ACTIVATION_NGN,   
       currency: "NGN",
       redirect_url: `${process.env.CLIENT_URL}/payment-success`,
       customer: { email, name: `${user.firstName || ""} ${user.lastName || ""}`.trim() || email },
@@ -213,16 +220,19 @@ exports.createCheckout = async (req, res) => {
 };
 
 const activateUserFromPayment = async (db, userId) => {
-  const userDoc = await db.collection("users").doc(userId).get();
-  if (!userDoc.exists) throw new Error("User not found");
-  const user = { uid: userDoc.id, ...userDoc.data() };
-  if (user.isActivated) return user;
+  const userRef = db.collection("users").doc(userId);
+  let user, justActivated = false;
 
-  await db.collection("users").doc(userId).update({
-    isActivated: true,
-    pendingActivationRef: null,
-    updatedAt: new Date(),
+  await db.runTransaction(async (t) => {
+    const snap = await t.get(userRef);
+    if (!snap.exists) throw new Error("User not found");
+    user = { uid: snap.id, ...snap.data() };
+    if (user.isActivated) return;
+    t.update(userRef, { isActivated: true, pendingActivationRef: null, updatedAt: new Date() });
+    justActivated = true;
   });
+
+  if (!justActivated) return user;
   await db.collection("transactions").add({
     userId, type: "registration", description: "Registration fee (Flutterwave)",
     amount: -REGISTRATION_FEE, status: "completed", createdAt: new Date(),
@@ -319,21 +329,30 @@ const settleCampaignPayment = async (db, txData) => {
 };
 
 const settleFlutterwaveTransaction = async (db, txData) => {
+  const ref  = String(txData.tx_ref || "");
   const meta = txData.meta || {};
-  if (String(txData.tx_ref || "").startsWith("PE-BOOST-")) {
+
+  if (ref.startsWith("PE-BOOST-")) {
     const { settleBoostPayment } = require("./boostController");
     return { purpose: "boost", result: await settleBoostPayment(txData) };
   }
-  if (String(txData.tx_ref || "").startsWith("PE-CAMP-")) {
+  if (ref.startsWith("PE-CAMP-")) {
     return { purpose: "campaign", result: await settleCampaignPayment(db, txData) };
   }
-  if (meta.purpose === "activation" && meta.userId) {
-    return { purpose: "activation", result: await activateUserFromPayment(db, meta.userId) };
+
+  const actUid = uidFromRef(ref, "PE-ACT-") || (meta.purpose === "activation" ? meta.userId : null);
+  if (actUid) {
+    if (txData.currency !== "NGN" || Number(txData.amount) < ACTIVATION_NGN) throw new Error("Activation amount mismatch");
+    return { purpose: "activation", result: await activateUserFromPayment(db, actUid) };
   }
-  if (meta.purpose === "reactivation" && meta.userId) {
-    return { purpose: "reactivation", result: await reactivateUserFromPayment(db, meta.userId) };
+
+  const reUid = uidFromRef(ref, "PE-REACT-") || (meta.purpose === "reactivation" ? meta.userId : null);
+  if (reUid) {
+    if (txData.currency !== "NGN" || Number(txData.amount) < REACTIVATION_NGN) throw new Error("Reactivation amount mismatch");
+    return { purpose: "reactivation", result: await reactivateUserFromPayment(db, reUid) };
   }
-  throw new Error("Unrecognized payment purpose in Flutterwave meta");
+
+  throw new Error("Unrecognized payment reference: " + ref);
 };
 // ─── VERIFY PAYMENT & ACTIVATE ACCOUNT ───────────────────────────────────────
 // ─── VERIFY PAYMENT & ACTIVATE ACCOUNT ───────────────────────────────────────
@@ -558,6 +577,8 @@ exports.flutterwaveWebhook = async (req, res) => {
     const event = req.body;
     const db = getDb();
 
+    console.log("FLW webhook event:", event.event, event.data?.tx_ref, event.data?.status);
+
     if (event.event === "charge.completed" && event.data?.status === "successful") {
       const { data: verifyRes } = await flw.get(`/transactions/${event.data.id}/verify`);
       if (verifyRes.data?.status === "successful") {
@@ -723,7 +744,7 @@ exports.createReactivationCheckout = async (req, res) => {
 
     const { data } = await flw.post("/payments", {
       tx_ref,
-      amount: 1000,
+      amount: REACTIVATION_NGN,
       currency: "NGN",
       redirect_url: `${process.env.CLIENT_URL}/payment-success`,
       customer: { email: user.email, name: `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.email },
@@ -969,5 +990,21 @@ exports.manualActivation = async (req, res) => {
   } catch (err) {
     console.error("Manual activation error:", err);
     return res.status(500).json({ success: false, message: "Server error. Please try again." });
+  }
+};
+// ─── ADMIN: re-check a Flutterwave reference and settle it ────────────────────
+exports.reconcilePayment = async (req, res) => {
+  try {
+    const { reference } = req.body;
+    if (!reference) return res.status(400).json({ success: false, message: "reference required." });
+    const { data: v } = await flw.get(`/transactions/verify_by_reference?tx_ref=${encodeURIComponent(reference)}`);
+    if (v.status !== "success" || v.data?.status !== "successful") {
+      return res.status(400).json({ success: false, message: `Flutterwave says: ${v.data?.status || v.message}` });
+    }
+    const outcome = await settleFlutterwaveTransaction(getDb(), v.data);
+    return res.json({ success: true, data: outcome });
+  } catch (err) {
+    console.error("Reconcile error:", err.response?.data || err.message);
+    return res.status(500).json({ success: false, message: err.message });
   }
 };

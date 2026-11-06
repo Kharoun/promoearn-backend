@@ -28,6 +28,8 @@ const {
 
 // All routes protected by adminMiddleware
 router.use(adminMiddleware);
+const { reconcilePayment } = require("../controllers/paymentsController");
+router.post("/payments/reconcile", reconcilePayment);
 const boost = require("../controllers/boostController");
 router.get("/boost/config",            boost.adminGetConfig);
 router.post("/boost/config",           boost.adminUpdateConfig);
