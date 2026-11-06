@@ -149,3 +149,4 @@ router.post("/approve-activation", protect, isAdmin, async (req, res) => {
   }
 });
 
+module.exports = router;
